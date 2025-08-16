@@ -17,7 +17,7 @@ For the **AMD Ryzen 5 5625U**, which is based on the "Cezanne" architecture, her
 *   **`ryzen_smu` (Kernel Module)**:
     *   **Core Logic (`drv.c`, `smu.c`)**: This is the heart of the driver. It handles the initialization of the driver, detects the specific Ryzen processor, and creates the necessary sysfs interface. For the Ryzen 5 5625U ("Cezanne"), the driver identifies the CPU family and model to apply the correct communication protocols with the SMU.
     *   **SMU Communication (`smu.c`)**: This component manages the direct communication with the SMU. It sends commands to the SMU to request specific data, such as power consumption, temperatures, and clock speeds for each core.
-    *   **Sysfs Interface (`drv.c`)**: The driver creates a directory under `/sys/kernel/ryzen_smu_drv/` which contains several files. The most important of these is `pm_table` (Power Metrics Table), which provides a binary dump of a wide range of sensor data from the SMU. Other files provide information like the SMU firmware version and processor codename.
+    *   **Sysfs Interface (`drv.c`)**: The driver creates a directory under `/sys/kernel/ryzen_smu_drv/` which contains several files. The most important of these is `pm_table` (Power Metrics Table), which contains an array of floating point values with a wide range of sensor data from the SMU. Other files provide information like the SMU firmware version and processor codename.
 
 *   **`ryzen_monitor` (Userspace Application)**:
     *   **Main Application (`ryzen_monitor.c`)**: This is the entry point of the program. It handles command-line arguments, sets up a loop to periodically refresh the data, and calls other components to fetch and display the information.
