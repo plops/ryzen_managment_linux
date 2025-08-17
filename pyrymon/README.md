@@ -43,7 +43,7 @@ metrics is fully configurable through a simple TOML file.
    ```bash
    uv run python main.py
    ```
-   You may need to give read permissions to the pm_table for your user: `sudo chmod a+rx /sys/kernel/ryzen_smu_drv/pm_table`
+   You may need to give read permissions to the pm_table for your user: `sudo chmod a+r /sys/kernel/ryzen_smu_drv/pm_table`
 
 ## Configuration
 
