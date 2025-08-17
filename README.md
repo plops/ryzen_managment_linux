@@ -142,3 +142,9 @@ There are **no official public specifications from AMD** on this. The maximum da
 2.  **Driver-Imposed Rate Limit**: As shown in the code snippet above, the `ryzen_smu` driver intentionally limits the refresh command rate to **approximately 1000 Hz (1ms)**. This is the practical maximum refresh rate you could get from the driver.
 
 3.  **Application-Determined Rate**: In reality, the rate is determined by the monitoring application. `ryzen_monitor` polls at 1 Hz by default. For human monitoring, a rate higher than 2-4 Hz is generally unnecessary and just consumes extra CPU cycles. The high-frequency data is primarily for the SMU's internal algorithms, not for external logging.
+
+
+# References
+
+1. Latest version of the kernel module https://github.com/amkillam/ryzen_smu
+2. https://github.com/mann1x/ryzen_monitor_ng
