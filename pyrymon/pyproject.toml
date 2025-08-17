@@ -1,0 +1,12 @@
+# ryzen_pm_monitor/pyproject.toml
+[project]
+name = "pyrymon"
+version = "0.1.0"
+description = "A utility to read and visualize Ryzen SMU pm_table data."
+requires-python = ">=3.10"
+dependencies = [
+    "pyqt6",
+    "pyqtgraph",
+    "numpy",
+    "tomli",
+]

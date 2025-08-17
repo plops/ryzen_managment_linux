@@ -1,0 +1,10 @@
+# ryzen_pm_monitor/config.toml
+[metrics]
+# Example metrics for a hypothetical PM table structure.
+# You will need to replace these with the correct offsets for your specific processor.
+"CPU_Temp" = { offset = 10, color = "r" }
+"CPU_Power" = { offset = 12, color = "g" }
+"GPU_Temp" = { offset = 25, color = "b" }
+"GPU_Power" = { offset = 28, color = "y" }
+"Core1_Voltage" = { offset = 50, color = "c" }
+"Core2_Voltage" = { offset = 51, color = "m" }
