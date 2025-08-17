@@ -2,7 +2,10 @@
 
 import struct
 import pandas as pd
+import matplotlib
+matplotlib.use('Qt5Agg') 
 import matplotlib.pyplot as plt
+plt.ion()
 import numpy as np
 from pathlib import Path
 
@@ -152,6 +155,7 @@ def plot_data(df: pd.DataFrame):
     plt.xlabel('Time')
     plt.tight_layout(rect=[0, 0.03, 1, 0.98]) # Adjust for suptitle
     plt.show()
+    plt.savefig("o.png")
 
 def main():
     """Main function to run the script."""
