@@ -9,9 +9,9 @@ add_subdirectory(extern)
 add_executable(pm_monitor src/main.cpp src/pm_table_reader.cpp)
 
 target_link_libraries(pm_monitor PRIVATE
-    taskflow::taskflow
-    imgui::imgui
-    implot::implot
+    taskflow
+    imgui
+    implot
     glfw
     glad
 )
@@ -19,6 +19,6 @@ target_link_libraries(pm_monitor PRIVATE
 if(WIN32)
     target_link_libraries(pm_monitor PRIVATE opengl32)
 else()
-    target_link_libraries(pm_monitor PRIVATE OpenGL::GL)
+    target_link_libraries(pm_monitor PRIVATE GL)
 endif()
 
