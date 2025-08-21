@@ -1,6 +1,4 @@
-//
-// Created by kiel on 8/21/25.
-//#include <iostream>
+#include <iostream>
 #include <vector>
 #include <thread>
 #include <chrono>
@@ -13,7 +11,6 @@
 #include <GLFW/glfw3.h>
 
 #include "pm_table_reader.hpp"
-#include <taskflow/taskflow.hpp>
 
 // Helper function to create a scrolling buffer for plots
 struct ScrollingBuffer {

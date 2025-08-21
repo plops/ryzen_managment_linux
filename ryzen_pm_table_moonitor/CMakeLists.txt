@@ -15,7 +15,12 @@ target_link_libraries(pm_monitor PRIVATE
     glfw
     glad
 )
-
+# Add the ImGui include directory manually (less preferred method)
+target_include_directories(pm_monitor PRIVATE
+        ${CMAKE_BINARY_DIR}/_deps/imgui-src
+        ${CMAKE_BINARY_DIR}/_deps/imgui-src/backends
+        ${CMAKE_BINARY_DIR}/_deps/implot-src
+)
 if(WIN32)
     target_link_libraries(pm_monitor PRIVATE opengl32)
 else()

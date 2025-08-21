@@ -4,7 +4,7 @@
 #include <string>
 #include <mutex>
 #include <optional>
-
+#include <thread>
 struct PMTableData {
     std::vector<float> core_clocks;
     std::vector<float> core_powers;
