@@ -7,9 +7,9 @@
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
 #include "implot.h"
-#include <glad/glad.h>
+// #include <glad/glad.h>
 #include <GLFW/glfw3.h>
-
+#include <taskflow/taskflow.hpp>
 #include "pm_table_reader.hpp"
 
 // Helper function to create a scrolling buffer for plots
@@ -52,7 +52,7 @@ int main() {
         return -1;
     }
     glfwMakeContextCurrent(window);
-    gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
+    // gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
 
     // Setup Dear ImGui context
     IMGUI_CHECKVERSION();
@@ -92,10 +92,10 @@ int main() {
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
+        static float t = 0;
 
         auto data = pm_table_reader.get_latest_data();
         if (data) {
-            static float t = 0;
             t += ImGui::GetIO().DeltaTime;
 
             for (size_t i = 0; i < data->core_clocks.size() && i < core_clock_buffers.size(); ++i) {

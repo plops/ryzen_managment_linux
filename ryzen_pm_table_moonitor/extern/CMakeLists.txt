@@ -24,6 +24,11 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(glfw)
 
 # GLAD
+set(GLAD_GENERATOR "c")
+set(GLAD_PROFILE "core")
+set(GLAD_API "gl=3.3") # Or whatever version you need
+set(GLAD_EXTENSIONS "") # Add extensions here if needed
+set(GLAD_SPEC "gl")
 FetchContent_Declare(
         glad
         GIT_REPOSITORY https://github.com/Dav1dde/glad.git
