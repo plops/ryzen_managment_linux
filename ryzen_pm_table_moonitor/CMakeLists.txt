@@ -6,6 +6,12 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 add_subdirectory(extern)
 
+# change cxxflags
+set(CMAKE_CXX_FLAGS
+        "-march=native -O3"
+)
+set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
+
 add_executable(pm_monitor
         src/main.cpp
         src/pm_table_reader.cpp
