@@ -8,7 +8,7 @@ add_subdirectory(extern)
 
 # change cxxflags
 set(CMAKE_CXX_FLAGS
-        "-march=native -O3"
+        "-march=native -O3 -floop-parallelize-all -floop-nest-optimize -floop-interchange"
 )
 set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
 
