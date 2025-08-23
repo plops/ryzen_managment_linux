@@ -32,12 +32,15 @@ std::optional<PMTableData> PMTableReader::get_latest_data() {
 void PMTableReader::read_loop() {
     std::vector<float> buffer(1024); // The file seems to be 4096 bytes, i.e., 1024 floats
 
-    int  bytes_to_read = buffer.size() * sizeof(float);
-    bool first_read    = true;
-
+    int                                                bytes_to_read   = buffer.size() * sizeof(float);
+    bool                                               first_read      = true;
+    double                                             period_estimate = 1000.0;
+    double                                             alpha           = .1;
+    std::chrono::time_point<std::chrono::system_clock> old_time        = std::chrono::system_clock::now();
+    int                                                count           = 0;
     while (running_) {
-        auto          start_time = std::chrono::high_resolution_clock::now();
-        std::ifstream pm_table_file(pm_table_path_, std::ios::binary);
+        std::chrono::time_point<std::chrono::system_clock> start_time = std::chrono::high_resolution_clock::now();
+        std::ifstream                                      pm_table_file(pm_table_path_, std::ios::binary);
         pm_table_file.read(reinterpret_cast<char *>(buffer.data()), bytes_to_read);
         int bytes_read = pm_table_file.gcount();
         spdlog::trace("read {} bytes from PM table", bytes_read);
@@ -59,10 +62,19 @@ void PMTableReader::read_loop() {
         } else {
             spdlog::warn("PMTableReader: No data read from PM table");
         }
-
+        if (!first_read) {
+            auto period     = std::chrono::duration_cast<std::chrono::microseconds>(start_time - old_time);
+            old_time        = start_time;
+            period_estimate = period.count() * alpha + period_estimate * (1 - alpha);
+            count++;
+            if (count == 5000) {
+                count = 0;
+                spdlog::info("read period {:3.3f}ms", period_estimate/1000.0);
+            }
+        }
         auto end_time   = std::chrono::high_resolution_clock::now();
         auto duration   = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
-        auto sleep_time = std::chrono::microseconds(1000) - duration;
+        auto sleep_time = std::chrono::microseconds(900) - duration;
         if (sleep_time.count() > 0) {
             std::this_thread::sleep_for(sleep_time);
         }
