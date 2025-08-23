@@ -12,6 +12,9 @@
 #include <GLFW/glfw3.h>
 #include <taskflow/taskflow.hpp>
 #include "pm_table_reader.hpp"
+#include <boost/pfr.hpp>
+#include <type_traits>
+#include <string>
 
 // Helper function to create a scrolling buffer for plots
 struct ScrollingBuffer {
@@ -38,6 +41,43 @@ struct ScrollingBuffer {
         }
     }
 };
+
+// Helper: Draw any struct in an ImGui table using Boost.PFR
+template <typename T>
+void DrawStructInTable(const char* table_id, const T& data) {
+    if (!ImGui::BeginTable(table_id, 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable))
+        return;
+    ImGui::TableSetupColumn("Metric", ImGuiTableColumnFlags_WidthFixed);
+    ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+    ImGui::TableHeadersRow();
+
+    boost::pfr::for_each_field(data, [&](const auto& field, auto index) {
+        auto member_name = boost::pfr::get_name<index, T>();
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::TextUnformatted(std::string(member_name).c_str());
+        ImGui::TableSetColumnIndex(1);
+        using FieldType = std::decay_t<decltype(field)>;
+        if constexpr (std::is_same_v<FieldType, float>) {
+            ImGui::Text("%.3f", field);
+        } else if constexpr (std::is_same_v<FieldType, std::vector<float>>) {
+            if (field.empty()) {
+                ImGui::TextUnformatted("[ ]");
+            } else {
+                ImGui::BeginChild((std::string(member_name) + "_child").c_str(), ImVec2(0, ImGui::GetTextLineHeightWithSpacing() * 1.5f), false, ImGuiWindowFlags_HorizontalScrollbar);
+                for (size_t i = 0; i < field.size(); ++i) {
+                    if (i > 0) ImGui::SameLine();
+                    ImGui::Text("%.2f", field[i]);
+                }
+                ImGui::EndChild();
+            }
+        } else {
+            ImGui::TextUnformatted("Unsupported Type");
+        }
+    });
+
+    ImGui::EndTable();
+}
 
 int main() {
     spdlog::info("Starting PM Table Monitor");
@@ -189,6 +229,12 @@ int main() {
         }
 
         ImGui::Begin("PM Table Monitor");
+
+        // Show current values in a table using Boost.PFR
+        if (data) {
+            ImGui::TextUnformatted("Current PM Table Values:");
+            DrawStructInTable("PMTableDataTable", *data);
+        }
 
         // Frequencies
         if (ImPlot::BeginPlot("Frequencies")) {

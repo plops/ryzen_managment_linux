@@ -55,6 +55,13 @@ if(NOT spdlog_FOUND)
     FetchContent_MakeAvailable(spdlog)
 endif()
 
+# Add Boost.PFR (header-only, so just find Boost and add include)
+find_package(Boost REQUIRED)
+if(Boost_FOUND)
+    message(STATUS "Boost found: ${Boost_INCLUDE_DIRS}")
+    include_directories(${Boost_INCLUDE_DIRS})
+endif()
+
 add_executable(pm_monitor
         src/main.cpp
         src/pm_table_reader.cpp
