@@ -1,0 +1,13 @@
+# add options to enable asan, ubsan and lsan (together) or tsan only
+option(ENABLE_ASAN "Enable AddressSanitizer, UndefinedBehaviorSanitizer and LeakSanitizer" OFF)
+option(ENABLE_TSAN "Enable ThreadSanitizer" OFF)
+if (ENABLE_ASAN)
+    message(STATUS "Enabling AddressSanitizer, UndefinedBehaviorSanitizer and LeakSanitizer")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address,undefined,leak -fno-omit-frame-pointer")
+    set(CMAKE_LINKER_FLAGS "${CMAKE_LINKER_FLAGS} -fsanitize=address,undefined,leak")
+endif()
+if (ENABLE_TSAN)
+    message(STATUS "Enabling ThreadSanitizer")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=thread -fno-omit-frame-pointer")
+    set(CMAKE_LINKER_FLAGS "${CMAKE_LINKER_FLAGS} -fsanitize=thread")
+endif()
