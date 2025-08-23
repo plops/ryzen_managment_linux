@@ -39,7 +39,7 @@ void PMTableReader::read_loop() {
     double                                             alpha            = .1;
     std::chrono::time_point<std::chrono::system_clock> old_time         = std::chrono::system_clock::now();
     int                                                count            = 0;
-    std::vector<int> wait_histogram(60, 0);
+    std::vector<int> wait_histogram(300, 0);
     int max_wait = 0;
     while (running_) {
         if (!first_read) {
@@ -88,7 +88,7 @@ void PMTableReader::read_loop() {
             count++;
             if (count == 5000) {
                 count = 0;
-                spdlog::info("read period {:3.3f}ms, max_wait={}iterations", period_estimate / 1000.0, max_wait);
+                spdlog::info("read period {:3.3f}ms, max_wait={} iterations", period_estimate / 1000.0, max_wait);
 
                 for (int i=0 ; i < wait_histogram.size(); i++) {
                     spdlog::info("bin: {:03d} {:06d}", i, wait_histogram[i]);
@@ -100,12 +100,12 @@ void PMTableReader::read_loop() {
                 max_wait = 0;
             }
         }
-        auto end_time   = std::chrono::high_resolution_clock::now();
-        auto duration   = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
-        auto sleep_time = std::chrono::microseconds((target_period_us * 9)/10) - duration;
-        if (sleep_time.count() > 0) {
-            std::this_thread::sleep_for(sleep_time);
-        }
+        // auto end_time   = std::chrono::high_resolution_clock::now();
+        // auto duration   = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
+        // auto sleep_time = std::chrono::microseconds((target_period_us * 7)/10) - duration;
+        // if (sleep_time.count() > 0) {
+        //     std::this_thread::sleep_for(sleep_time);
+        // }
     }
     spdlog::info("PMTableReader: Exiting read loop");
 }
