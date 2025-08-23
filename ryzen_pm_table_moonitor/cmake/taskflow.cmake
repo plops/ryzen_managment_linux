@@ -1,5 +1,6 @@
-find_package(taskflow QUIET)
-if (NOT taskflow_FOUND)
+find_package(Taskflow)
+if (NOT Taskflow_FOUND)
+    message(STATUS "taskflow not found in dependiencies folder")
     # TaskFlow
     # --- FIX: Disable building of examples and tests to prevent target name collisions ---
     set(TF_BUILD_EXAMPLES OFF CACHE INTERNAL "Disable TaskFlow examples")

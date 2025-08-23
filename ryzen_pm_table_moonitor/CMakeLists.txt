@@ -4,15 +4,12 @@ project(PM_Table_Monitor CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-#add_subdirectory(extern)
-
-
+set(CMAKE_PREFIX_PATH ${CMAKE_PREFIX_PATH} /home/kiel/deps/lib64/cmake)
+set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} /home/kiel/deps/lib64/cmake)
 
 include(FetchContent)
-#message(${CMAKE_MODULE_PATH})
-#set(CMAKE_MODULE_PATH /home/kiel/stage/ryzen_managment_linux/ryzen_pm_table_moonitor/cmake)
-include(cmake/flags.cmake)
 
+include(cmake/flags.cmake)
 include(cmake/sanitizers.cmake)
 include(cmake/spdlog.cmake)
 include(cmake/boost.cmake)
