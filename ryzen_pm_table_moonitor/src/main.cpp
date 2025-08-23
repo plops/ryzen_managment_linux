@@ -2,6 +2,7 @@
 #include <vector>
 #include <thread>
 #include <chrono>
+#include <spdlog/spdlog.h>
 
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
@@ -39,18 +40,26 @@ struct ScrollingBuffer {
 };
 
 int main() {
+    spdlog::info("Starting PM Table Monitor");
+
     // Setup window
-    glfwInit();
+    if (!glfwInit()) {
+        spdlog::error("Failed to initialize GLFW");
+        return -1;
+    }
+    spdlog::info("GLFW initialized");
+
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
     GLFWwindow* window = glfwCreateWindow(1280, 720, "PM Table Monitor", nullptr, nullptr);
     if (window == nullptr) {
-        std::cerr << "Failed to create GLFW window" << std::endl;
+        spdlog::error("Failed to create GLFW window");
         glfwTerminate();
         return -1;
     }
+    spdlog::info("GLFW window created");
     glfwMakeContextCurrent(window);
     // gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
 
@@ -74,6 +83,7 @@ int main() {
     tf::Taskflow taskflow;
 
     taskflow.emplace([&](){
+        spdlog::info("Starting PM table reading thread");
         pm_table_reader.start_reading();
     });
 
@@ -84,6 +94,7 @@ int main() {
     ScrollingBuffer package_power_buffer(2000);
     float history = 10.0f;
 
+    spdlog::info("Entering main loop");
     // Main loop
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
@@ -159,6 +170,7 @@ int main() {
         glfwSwapBuffers(window);
     }
 
+    spdlog::info("Exiting main loop, stopping PM table reading thread");
     pm_table_reader.stop_reading();
 
     // Cleanup
@@ -170,5 +182,6 @@ int main() {
     glfwDestroyWindow(window);
     glfwTerminate();
 
+    spdlog::info("Shutdown complete");
     return 0;
 }

@@ -2,18 +2,22 @@
 #include <fstream>
 #include <iostream>
 #include <chrono>
+#include <spdlog/spdlog.h>
 
 PMTableReader::PMTableReader(const std::string& path) : pm_table_path_(path) {}
 
 void PMTableReader::start_reading() {
+    spdlog::info("PMTableReader: Starting reading thread");
     running_ = true;
     reader_thread_ = std::thread(&PMTableReader::read_loop, this);
 }
 
 void PMTableReader::stop_reading() {
+    spdlog::info("PMTableReader: Stopping reading thread");
     running_ = false;
     if (reader_thread_.joinable()) {
         reader_thread_.join();
+        spdlog::info("PMTableReader: Reading thread stopped");
     }
 }
 
@@ -28,9 +32,10 @@ std::optional<PMTableData> PMTableReader::get_latest_data() {
 void PMTableReader::read_loop() {
     std::ifstream pm_table_file(pm_table_path_, std::ios::binary);
     if (!pm_table_file) {
-        std::cerr << "Error: Could not open " << pm_table_path_ << std::endl;
+        spdlog::error("PMTableReader: Could not open {}", pm_table_path_);
         return;
     }
+    spdlog::info("PMTableReader: Opened {}", pm_table_path_);
 
     std::vector<float> buffer(4096); // Adjust buffer size as needed
 
@@ -41,11 +46,6 @@ void PMTableReader::read_loop() {
         pm_table_file.read(reinterpret_cast<char*>(buffer.data()), buffer.size() * sizeof(float));
 
         if (pm_table_file.gcount() > 0) {
-            // This is a simplified example. The actual offsets for the data
-            // you want to read from the pm_table will depend on your specific
-            // CPU and the ryzen_smu driver version.
-            // You will need to consult the ryzen_smu documentation or other
-            // resources to find the correct offsets.
             PMTableData new_data;
             // Example: reading 8 core clocks starting at a hypothetical offset of 10
             new_data.core_clocks.assign(buffer.begin() + 10, buffer.begin() + 18);
@@ -58,6 +58,9 @@ void PMTableReader::read_loop() {
                 std::lock_guard<std::mutex> lock(data_mutex_);
                 latest_data_ = std::move(new_data);
             }
+            spdlog::debug("PMTableReader: Read new data from PM table");
+        } else {
+            spdlog::warn("PMTableReader: No data read from PM table");
         }
 
         auto end_time = std::chrono::high_resolution_clock::now();
@@ -67,4 +70,5 @@ void PMTableReader::read_loop() {
             std::this_thread::sleep_for(sleep_time);
         }
     }
+    spdlog::info("PMTableReader: Exiting read loop");
 }
