@@ -21,7 +21,7 @@ struct ScrollingBuffer {
     int              MaxSize;
     int              Offset;
     ImVector<ImVec2> Data;
-    ScrollingBuffer(int max_size = 2000) {
+    explicit ScrollingBuffer(int max_size = 2000) {
         MaxSize = max_size;
         Offset  = 0;
         Data.reserve(MaxSize);
@@ -35,7 +35,7 @@ struct ScrollingBuffer {
         }
     }
     void Erase() {
-        if (Data.size() > 0) {
+        if (!Data.empty()) {
             Data.shrink(0);
             Offset = 0;
         }
@@ -163,11 +163,9 @@ int main() {
     ScrollingBuffer thm_limit_buffer(2000), thm_value_buffer(2000);
     ScrollingBuffer fit_limit_buffer(2000), fit_value_buffer(2000);
 
-    float history = 10.0f;
-
     spdlog::info("Entering main loop");
-    // Main loop
     while (!glfwWindowShouldClose(window)) {
+        float history = 10.0f;
         glfwPollEvents();
 
         // Start the Dear ImGui frame

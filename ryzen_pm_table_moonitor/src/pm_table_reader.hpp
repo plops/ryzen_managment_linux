@@ -64,7 +64,7 @@ PMTableData parse_pm_table_0x400005(const std::vector<float> &buffer);
 
 class PMTableReader {
 public:
-    PMTableReader(const std::string &path = "/sys/kernel/ryzen_smu_drv/pm_table");
+    explicit PMTableReader(const std::string &path = "/sys/kernel/ryzen_smu_drv/pm_table");
     void                       start_reading();
     void                       stop_reading();
     std::optional<PMTableData> get_latest_data();

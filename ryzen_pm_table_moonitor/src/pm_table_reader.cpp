@@ -1,8 +1,5 @@
 #include "pm_table_reader.hpp"
 #include <algorithm>
-#include <array>
-#include <cassert>
-#include <cstring>
 #include <fstream>
 #include <span>
 #include <spdlog/spdlog.h>
@@ -39,10 +36,10 @@ void PMTableReader::read_loop() {
     bool first_read    = true;
 
     while (running_) {
-        auto start_time = std::chrono::high_resolution_clock::now();
+        auto          start_time = std::chrono::high_resolution_clock::now();
         std::ifstream pm_table_file(pm_table_path_, std::ios::binary);
         pm_table_file.read(reinterpret_cast<char *>(buffer.data()), bytes_to_read);
-        auto bytes_read = pm_table_file.gcount();
+        int bytes_read = pm_table_file.gcount();
         spdlog::trace("read {} bytes from PM table", bytes_read);
         if (first_read && (bytes_to_read != bytes_read)) {
             spdlog::warn("PMTableReader: Expected to read {} bytes, but read {} adjusting size", bytes_to_read,
