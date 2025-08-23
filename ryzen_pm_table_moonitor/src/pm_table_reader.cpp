@@ -32,20 +32,30 @@ std::optional<PMTableData> PMTableReader::get_latest_data() {
 void PMTableReader::read_loop() {
     std::vector<float> buffer(1024); // The file seems to be 4096 bytes, i.e., 1024 floats
 
-    int                                                bytes_to_read   = buffer.size() * sizeof(float);
-    bool                                               first_read      = true;
-    double                                             period_estimate = 1000.0;
-    double                                             alpha           = .1;
-    std::chrono::time_point<std::chrono::system_clock> old_time        = std::chrono::system_clock::now();
-    int                                                count           = 0;
+    int                                                bytes_to_read    = buffer.size() * sizeof(float);
+    bool                                               first_read       = true;
+    int                                                target_period_us = 1000;
+    double                                             period_estimate  = target_period_us;
+    double                                             alpha            = .1;
+    std::chrono::time_point<std::chrono::system_clock> old_time         = std::chrono::system_clock::now();
+    int                                                count            = 0;
     while (running_) {
+        if (!first_read) {
+            // busy wait to fill period to 1ms
+            int wait_count = 0;
+            while (std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() -
+                                                                         old_time)
+                           .count() < target_period_us) {
+                wait_count++;
+            }
+        }
         std::chrono::time_point<std::chrono::system_clock> start_time = std::chrono::high_resolution_clock::now();
         std::ifstream                                      pm_table_file(pm_table_path_, std::ios::binary);
         pm_table_file.read(reinterpret_cast<char *>(buffer.data()), bytes_to_read);
         int bytes_read = pm_table_file.gcount();
         spdlog::trace("read {} bytes from PM table", bytes_read);
         if (first_read && (bytes_to_read != bytes_read)) {
-            spdlog::warn("PMTableReader: Expected to read {} bytes, but read {} adjusting size", bytes_to_read,
+            spdlog::warn("PMTableReader: Expected to read {} bytes, but read {}. Adjusting read size to this value.", bytes_to_read,
                          bytes_read);
             bytes_to_read = bytes_read; // Adjust to actual read size
             first_read    = false;
@@ -69,12 +79,12 @@ void PMTableReader::read_loop() {
             count++;
             if (count == 5000) {
                 count = 0;
-                spdlog::info("read period {:3.3f}ms", period_estimate/1000.0);
+                spdlog::info("read period {:3.3f}ms", period_estimate / 1000.0);
             }
         }
         auto end_time   = std::chrono::high_resolution_clock::now();
         auto duration   = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
-        auto sleep_time = std::chrono::microseconds(900) - duration;
+        auto sleep_time = std::chrono::microseconds((target_period_us * 8)/10) - duration;
         if (sleep_time.count() > 0) {
             std::this_thread::sleep_for(sleep_time);
         }
