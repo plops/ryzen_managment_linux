@@ -26,7 +26,7 @@ void PMTableReader::stop_reading() {
 
 std::optional<PMTableData> PMTableReader::get_latest_data() {
     std::lock_guard<std::mutex> lock(data_mutex_);
-    if (latest_data_.core_clocks.empty()) {
+    if (latest_data_.core_cc1.empty()) {
         return std::nullopt;
     }
     return latest_data_;
@@ -56,14 +56,14 @@ void PMTableReader::read_loop() {
 
 
         if (bytes_read > 0) {
-            PMTableValues values = parse_pm_table_0x400005(buffer);
-            PMTableData new_data;
-            // Example: reading 8 core clocks starting at a hypothetical offset of 10
-            new_data.core_clocks.assign(buffer.begin() + 10, buffer.begin() + 18);
-            // Example: reading 8 core powers starting at a hypothetical offset of 20
-            new_data.core_powers.assign(buffer.begin() + 20, buffer.begin() + 28);
-            // Example: reading package power at a hypothetical offset of 30
-            new_data.package_power = buffer[30];
+            PMTableData new_data = parse_pm_table_0x400005(buffer);
+            // PMTableData new_data;
+            // // Example: reading 8 core clocks starting at a hypothetical offset of 10
+            // new_data.core_clocks.assign(buffer.begin() + 10, buffer.begin() + 18);
+            // // Example: reading 8 core powers starting at a hypothetical offset of 20
+            // new_data.core_powers.assign(buffer.begin() + 20, buffer.begin() + 28);
+            // // Example: reading package power at a hypothetical offset of 30
+            // new_data.package_power = buffer[30];
 
             {
                 std::lock_guard<std::mutex> lock(data_mutex_);
@@ -84,8 +84,8 @@ void PMTableReader::read_loop() {
     spdlog::info("PMTableReader: Exiting read loop");
 }
 
-PMTableValues parse_pm_table_0x400005(const std::vector<float>& buffer) {
-    PMTableValues v;
+PMTableData parse_pm_table_0x400005(const std::vector<float>& buffer) {
+    PMTableData v;
     // Offsets from pm_tables.c for 0x400005, only //o fields
     v.stapm_limit      = buffer.size() > 0   ? buffer[0]   : 0.0f;
     v.stapm_value      = buffer.size() > 1   ? buffer[1]   : 0.0f;

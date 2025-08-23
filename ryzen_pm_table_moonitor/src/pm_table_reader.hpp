@@ -6,35 +6,7 @@
 #include <optional>
 #include <thread>
 
-
-#define PMT_MAX_NUM_L3      4
-#define PMT_MAX_NUM_CORES   16
-#define PMT_MAX_NUM_CLKS    8
-
 struct PMTableData {
-    std::vector<float> core_clocks;
-    std::vector<float> core_powers;
-    float package_power;
-};
-
-class PMTableReader {
-public:
-    PMTableReader(const std::string& path = "/sys/kernel/ryzen_smu_drv/pm_table");
-    void start_reading();
-    void stop_reading();
-    std::optional<PMTableData> get_latest_data();
-
-private:
-    void read_loop();
-
-    std::string pm_table_path_;
-    bool running_ = false;
-    std::thread reader_thread_;
-    std::mutex data_mutex_;
-    PMTableData latest_data_;
-};
-
-struct PMTableValues {
     // Only fields marked with //o in pm_tables.c, using 0x400005 as reference
     float stapm_limit = 0.0f;
     float stapm_value = 0.0f;
@@ -87,4 +59,30 @@ struct PMTableValues {
     // Add more fields as needed
 };
 
-PMTableValues parse_pm_table_0x400005(const std::vector<float>& buffer);
+PMTableData parse_pm_table_0x400005(const std::vector<float>& buffer);
+
+// struct PMTableData {
+//     std::vector<float> core_clocks;
+//     std::vector<float> core_powers;
+//     float package_power;
+// };
+
+class PMTableReader {
+public:
+    PMTableReader(const std::string& path = "/sys/kernel/ryzen_smu_drv/pm_table");
+    void start_reading();
+    void stop_reading();
+    std::optional<PMTableData> get_latest_data();
+
+private:
+    void read_loop();
+
+    std::string pm_table_path_;
+    bool running_ = false;
+    std::thread reader_thread_;
+    std::mutex data_mutex_;
+    PMTableData latest_data_;
+};
+
+
+
