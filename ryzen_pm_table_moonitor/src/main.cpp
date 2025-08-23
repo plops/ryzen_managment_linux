@@ -237,6 +237,11 @@ int main() {
             fit_value_buffer.AddPoint(t, data->fit_value);
         }
 
+        static ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings;
+        const ImGuiViewport* viewport = ImGui::GetMainViewport();
+        ImGui::SetNextWindowPos(viewport->Pos);
+        ImGui::SetNextWindowSize( viewport->Size);
+
         ImGui::Begin("PM Table Monitor");
 
         // Show current values in a table using Boost.PFR
