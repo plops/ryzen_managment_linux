@@ -39,6 +39,8 @@ void PMTableReader::read_loop() {
     double                                             alpha            = .1;
     std::chrono::time_point<std::chrono::system_clock> old_time         = std::chrono::system_clock::now();
     int                                                count            = 0;
+    std::vector<int> wait_histogram(60, 0);
+    int max_wait = 0;
     while (running_) {
         if (!first_read) {
             // busy wait to fill period to 1ms
@@ -48,6 +50,13 @@ void PMTableReader::read_loop() {
                            .count() < target_period_us) {
                 wait_count++;
             }
+            spdlog::trace("wait_count: {}", wait_count);
+            if (max_wait < wait_count)
+                max_wait = wait_count;
+            if (wait_count > wait_histogram.size()-1)
+                wait_count = wait_histogram.size()-1;
+
+            wait_histogram[wait_count]++;
         }
         std::chrono::time_point<std::chrono::system_clock> start_time = std::chrono::high_resolution_clock::now();
         std::ifstream                                      pm_table_file(pm_table_path_, std::ios::binary);
@@ -79,12 +88,21 @@ void PMTableReader::read_loop() {
             count++;
             if (count == 5000) {
                 count = 0;
-                spdlog::info("read period {:3.3f}ms", period_estimate / 1000.0);
+                spdlog::info("read period {:3.3f}ms, max_wait={}iterations", period_estimate / 1000.0, max_wait);
+
+                for (int i=0 ; i < wait_histogram.size(); i++) {
+                    spdlog::info("bin: {:03d} {:06d}", i, wait_histogram[i]);
+                }
+                // zero all the values in histogram
+                for (auto&&bin : wait_histogram) {
+                    bin = 0;
+                }
+                max_wait = 0;
             }
         }
         auto end_time   = std::chrono::high_resolution_clock::now();
         auto duration   = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
-        auto sleep_time = std::chrono::microseconds((target_period_us * 8)/10) - duration;
+        auto sleep_time = std::chrono::microseconds((target_period_us * 9)/10) - duration;
         if (sleep_time.count() > 0) {
             std::this_thread::sleep_for(sleep_time);
         }
