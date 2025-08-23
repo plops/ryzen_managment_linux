@@ -6,28 +6,46 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 add_subdirectory(extern)
 
-# change cxxflags
-set(CMAKE_CXX_FLAGS
-        "-march=native -O3 -floop-parallelize-all -floop-nest-optimize -floop-interchange"
-)
-set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
+# change cxxflags to use graphite loop otimizations only for release and relwithdebinfo
+# -march=native -O3 -floop-parallelize-all -floop-nest-optimize -floop-interchange
+# and enable -flto for release
+
+if (CMAKE_BUILD_TYPE STREQUAL "Release")
+    message(STATUS "Release build")
+    set(CMAKE_CXX_FLAGS_RELEASE
+            "-O3 -march=native -floop-parallelize-all -floop-nest-optimize -floop-interchange"
+    )
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
+elseif (CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
+    message(STATUS "RelWithDebInfo build")
+    set(CMAKE_CXX_FLAGS_RELWITHDEBINFO
+            "-O2 -g -march=native --floop-parallelize-all -floop-nest-optimize -floop-interchange"
+    )
+else()
+    message(STATUS "Debug build")
+    set(CMAKE_CXX_FLAGS_DEBUG
+            "-O0 -g"
+    )
+endif()
+
+# add options to eneable asan, ubsan and lsan (together) or tsan only
+option(ENABLE_ASAN "Enable AddressSanitizer, UndefinedBehaviorSanitizer and LeakSanitizer" OFF)
+option(ENABLE_TSAN "Enable ThreadSanitizer" OFF)
+if (ENABLE_ASAN)
+    message(STATUS "Enabling AddressSanitizer, UndefinedBehaviorSanitizer and LeakSanitizer")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address,undefined,leak -fno-omit-frame-pointer")
+    set(CMAKE_LINKER_FLAGS "${CMAKE_LINKER_FLAGS} -fsanitize=address,undefined,leak")
+endif()
+if (ENABLE_TSAN)
+    message(STATUS "Enabling ThreadSanitizer")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=thread -fno-omit-frame-pointer")
+    set(CMAKE_LINKER_FLAGS "${CMAKE_LINKER_FLAGS} -fsanitize=thread")
+endif()
+
 
 add_executable(pm_monitor
         src/main.cpp
         src/pm_table_reader.cpp
-#        ${CMAKE_CURRENT_BINARY_DIR}/_deps/imgui-src/imgui.cpp
-#        ${CMAKE_CURRENT_BINARY_DIR}/_deps/imgui-src/imgui_widgets.cpp
-#        ${CMAKE_CURRENT_BINARY_DIR}/_deps/imgui-src/imgui_tables.cpp
-#        ${CMAKE_CURRENT_BINARY_DIR}/_deps/imgui-src/imgui_draw.cpp
-#        ${CMAKE_CURRENT_BINARY_DIR}/_deps/imgui-src/imgui.cpp
-#        ${CMAKE_CURRENT_BINARY_DIR}/_deps/imgui-src/imgui.h
-#        ${CMAKE_CURRENT_BINARY_DIR}/_deps/imgui-src/imgui_internal.h
-#        ${CMAKE_CURRENT_BINARY_DIR}/_deps/imgui-src/backends/imgui_impl_opengl3.cpp
-#        ${CMAKE_CURRENT_BINARY_DIR}/_deps/imgui-src/backends/imgui_impl_glfw.cpp
-#        ${CMAKE_CURRENT_BINARY_DIR}/_deps/implot-src/implot.cpp
-#        ${CMAKE_CURRENT_BINARY_DIR}/_deps/implot-src/implot_items.cpp
-#        ${CMAKE_CURRENT_BINARY_DIR}/_deps/implot-src/implot_internal.h
-#        ${CMAKE_CURRENT_BINARY_DIR}/_deps/implot-src/implot.h
 )
 
 target_link_libraries(pm_monitor PRIVATE

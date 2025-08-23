@@ -2,8 +2,8 @@ include(FetchContent)
 
 # TaskFlow
 # --- FIX: Disable building of examples and tests to prevent target name collisions ---
-#set(TF_BUILD_EXAMPLES OFF CACHE INTERNAL "Disable TaskFlow examples")
-#set(TF_BUILD_TESTS OFF CACHE INTERNAL "Disable TaskFlow tests")
+set(TF_BUILD_EXAMPLES OFF CACHE INTERNAL "Disable TaskFlow examples")
+set(TF_BUILD_TESTS OFF CACHE INTERNAL "Disable TaskFlow tests")
 FetchContent_Declare(
         taskflow
         GIT_REPOSITORY https://github.com/taskflow/taskflow.git
@@ -41,7 +41,7 @@ FetchContent_MakeAvailable(glfw)
 FetchContent_Declare(
         imgui
         GIT_REPOSITORY https://github.com/ocornut/imgui.git
-        GIT_TAG        v1.92.2b
+       # GIT_TAG        v1.92.2b
 )
 
 # implot v0.16 has issues with imgui v1.92.1: font->FindGlyph
