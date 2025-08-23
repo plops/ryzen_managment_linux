@@ -174,6 +174,9 @@ int main() {
         ImGui::NewFrame();
         static float t = 0;
 
+        ImGui::ShowDemoWindow();
+        ImPlot::ShowDemoWindow();
+
         auto data = pm_table_reader.get_latest_data();
         if (data) {
             t += ImGui::GetIO().DeltaTime;

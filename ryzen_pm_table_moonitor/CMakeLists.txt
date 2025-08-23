@@ -26,7 +26,6 @@ target_link_libraries(pm_monitor PRIVATE
         implot
         glfw
         spdlog::spdlog
-        #    glad
 )
 
 if (WIN32)
@@ -34,10 +33,3 @@ if (WIN32)
 else ()
     target_link_libraries(pm_monitor PRIVATE GL)
 endif ()
-
-# Add the ImGui include directory manually (less preferred method)
-#target_include_directories(pm_monitor PRIVATE
-#        ${CMAKE_BINARY_DIR}/_deps/imgui-src
-#        ${CMAKE_BINARY_DIR}/_deps/imgui-src/backends
-#        ${CMAKE_BINARY_DIR}/_deps/implot-src
-#)
