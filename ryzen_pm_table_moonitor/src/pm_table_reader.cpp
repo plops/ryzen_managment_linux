@@ -39,31 +39,21 @@ void PMTableReader::read_loop() {
     bool first_read    = true;
 
     while (running_) {
-        std::ifstream pm_table_file(pm_table_path_, std::ios::binary);
-
         auto start_time = std::chrono::high_resolution_clock::now();
-
-        // pm_table_file.seekg(0);
+        std::ifstream pm_table_file(pm_table_path_, std::ios::binary);
         pm_table_file.read(reinterpret_cast<char *>(buffer.data()), bytes_to_read);
         auto bytes_read = pm_table_file.gcount();
-        spdlog::info("read {} bytes from PM table", bytes_read);
+        spdlog::trace("read {} bytes from PM table", bytes_read);
         if (first_read && (bytes_to_read != bytes_read)) {
             spdlog::warn("PMTableReader: Expected to read {} bytes, but read {} adjusting size", bytes_to_read,
                          bytes_read);
             bytes_to_read = bytes_read; // Adjust to actual read size
             first_read    = false;
         } else {
-            spdlog::debug("PMTableReader: Successfully read {} bytes from PM table", bytes_read);
+            spdlog::trace("PMTableReader: Successfully read {} bytes from PM table", bytes_read);
         }
         if (bytes_read > 0) {
             PMTableData new_data = parse_pm_table_0x400005(buffer);
-            // PMTableData new_data;
-            // // Example: reading 8 core clocks starting at a hypothetical offset of 10
-            // new_data.core_clocks.assign(buffer.begin() + 10, buffer.begin() + 18);
-            // // Example: reading 8 core powers starting at a hypothetical offset of 20
-            // new_data.core_powers.assign(buffer.begin() + 20, buffer.begin() + 28);
-            // // Example: reading package power at a hypothetical offset of 30
-            // new_data.package_power = buffer[30];
             {
                 std::lock_guard<std::mutex> lock(data_mutex_);
                 latest_data_ = std::move(new_data);

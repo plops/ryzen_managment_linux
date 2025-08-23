@@ -62,12 +62,6 @@ struct PMTableData {
 
 PMTableData parse_pm_table_0x400005(const std::vector<float> &buffer);
 
-// struct PMTableData {
-//     std::vector<float> core_clocks;
-//     std::vector<float> core_powers;
-//     float package_power;
-// };
-
 class PMTableReader {
 public:
     PMTableReader(const std::string &path = "/sys/kernel/ryzen_smu_drv/pm_table");
