@@ -15,25 +15,25 @@ set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
 add_executable(pm_monitor
         src/main.cpp
         src/pm_table_reader.cpp
-        ${CMAKE_CURRENT_BINARY_DIR}/_deps/imgui-src/imgui.cpp
-        ${CMAKE_CURRENT_BINARY_DIR}/_deps/imgui-src/imgui_widgets.cpp
-        ${CMAKE_CURRENT_BINARY_DIR}/_deps/imgui-src/imgui_tables.cpp
-        ${CMAKE_CURRENT_BINARY_DIR}/_deps/imgui-src/imgui_draw.cpp
-        ${CMAKE_CURRENT_BINARY_DIR}/_deps/imgui-src/imgui.cpp
-        ${CMAKE_CURRENT_BINARY_DIR}/_deps/imgui-src/imgui.h
-        ${CMAKE_CURRENT_BINARY_DIR}/_deps/imgui-src/imgui_internal.h
-        ${CMAKE_CURRENT_BINARY_DIR}/_deps/imgui-src/backends/imgui_impl_opengl3.cpp
-        ${CMAKE_CURRENT_BINARY_DIR}/_deps/imgui-src/backends/imgui_impl_glfw.cpp
-        ${CMAKE_CURRENT_BINARY_DIR}/_deps/implot-src/implot.cpp
-        ${CMAKE_CURRENT_BINARY_DIR}/_deps/implot-src/implot_items.cpp
-        ${CMAKE_CURRENT_BINARY_DIR}/_deps/implot-src/implot_internal.h
-        ${CMAKE_CURRENT_BINARY_DIR}/_deps/implot-src/implot.h
+#        ${CMAKE_CURRENT_BINARY_DIR}/_deps/imgui-src/imgui.cpp
+#        ${CMAKE_CURRENT_BINARY_DIR}/_deps/imgui-src/imgui_widgets.cpp
+#        ${CMAKE_CURRENT_BINARY_DIR}/_deps/imgui-src/imgui_tables.cpp
+#        ${CMAKE_CURRENT_BINARY_DIR}/_deps/imgui-src/imgui_draw.cpp
+#        ${CMAKE_CURRENT_BINARY_DIR}/_deps/imgui-src/imgui.cpp
+#        ${CMAKE_CURRENT_BINARY_DIR}/_deps/imgui-src/imgui.h
+#        ${CMAKE_CURRENT_BINARY_DIR}/_deps/imgui-src/imgui_internal.h
+#        ${CMAKE_CURRENT_BINARY_DIR}/_deps/imgui-src/backends/imgui_impl_opengl3.cpp
+#        ${CMAKE_CURRENT_BINARY_DIR}/_deps/imgui-src/backends/imgui_impl_glfw.cpp
+#        ${CMAKE_CURRENT_BINARY_DIR}/_deps/implot-src/implot.cpp
+#        ${CMAKE_CURRENT_BINARY_DIR}/_deps/implot-src/implot_items.cpp
+#        ${CMAKE_CURRENT_BINARY_DIR}/_deps/implot-src/implot_internal.h
+#        ${CMAKE_CURRENT_BINARY_DIR}/_deps/implot-src/implot.h
 )
 
 target_link_libraries(pm_monitor PRIVATE
         Taskflow::Taskflow
-#    imgui
-#    implot
+    imgui
+    implot
     glfw
 #    glad
 )
