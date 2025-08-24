@@ -135,6 +135,7 @@ void RenderTextWithOutline(const char* text, const ImVec4& text_color)
 
 // Helper function to render the detailed content for a given cell.
 // This will be used by both the hover tooltip and the new pinned windows.
+// UPDATED to show top 4 cores
 void RenderCellDetails(int index, const CellStats& stats, const StressTester& stress_tester, const std::vector<ImVec4>& core_colors) {
     ImGui::Text("Index: %5d, Bytes: %5d .. %5d", index, index * 4, index * 4 + 3);
     // Chess index (row/col) A..H, 1..64
@@ -146,15 +147,26 @@ void RenderCellDetails(int index, const CellStats& stats, const StressTester& st
     ImGui::Text("Mean: %8.3f", stats.mean);
     ImGui::Text("StdDev: %8.3f", stats.get_stddev());
     ImGui::Separator();
-    ImGui::Text("Dominant Core: %d", stats.dominant_core_id);
-    ImGui::Text("Corr. Strength:   %.3f", stats.correlation_strength);
 
-    //  Display the quality score and color indicator
-    ImGui::Text("Corr. Quality:    %.3f", stats.correlation_quality);
-    ImVec4 quality_color = ImVec4(1.0f, 0.3f, 0.3f, 1.0f); // Red
-    if (stats.correlation_quality > 0.75f) quality_color = ImVec4(0.3f, 1.0f, 0.3f, 1.0f); // Green
-    else if (stats.correlation_quality > 0.4f) quality_color = ImVec4(1.0f, 1.0f, 0.3f, 1.0f); // Yellow
-    ImGui::TextColored(quality_color, "Quality Indicator");
+    // --- NEW: Display top 4 correlated cores in a table ---
+    ImGui::Text("Top Correlated Cores:");
+    if (ImGui::BeginTable("CorrTable", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchSame)) {
+        ImGui::TableSetupColumn("Core");
+        ImGui::TableSetupColumn("Strength");
+        ImGui::TableSetupColumn("Quality");
+        ImGui::TableHeadersRow();
+        for (const auto& corr_info : stats.top_correlations) {
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextColored(core_colors[corr_info.core_id], "%d", corr_info.core_id);
+            ImGui::TableSetColumnIndex(1);
+            ImGui::Text("%.3f", corr_info.correlation_strength);
+            ImGui::TableSetColumnIndex(2);
+            ImGui::Text("%.3f", corr_info.correlation_quality);
+        }
+        ImGui::EndTable();
+    }
+
 
     // --- Realtime hover graph ---
     ImGui::Separator();
@@ -170,7 +182,8 @@ void RenderCellDetails(int index, const CellStats& stats, const StressTester& st
             values.push_back(sample.value);
         }
 
-        bool has_dominant_core = stats.dominant_core_id != -1 && stress_tester.is_running();
+        // UPDATED: Check if there's at least one correlated core
+        bool has_dominant_core = !stats.top_correlations.empty() && stress_tester.is_running();
 
         if (ImPlot::BeginPlot("##History", ImVec2(400, 200), ImPlotFlags_NoTitle | ImPlotFlags_NoLegend | ImPlotFlags_NoMouseText | (has_dominant_core ? ImPlotFlags_YAxis2 : 0) )) {
             // --- Phase 1: Setup all axes before plotting ---
@@ -196,10 +209,12 @@ void RenderCellDetails(int index, const CellStats& stats, const StressTester& st
                 std::vector<float> core_state_values;
                 core_state_values.reserve(stats.history.size());
 
+                const auto& top_core_info = stats.top_correlations[0];
                 const auto& periods = stress_tester.get_periods();
                 const auto stress_start_time = stress_tester.get_start_time();
                 const long long stress_start_time_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(stress_start_time.time_since_epoch()).count();
-                const long long period_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(periods[stats.dominant_core_id]).count();
+                // UPDATED: Use the period of the top core for the graph
+                const long long period_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(periods[top_core_info.core_id]).count();
                 const long long work_duration_ns = period_ns / 3;
 
                 for (const auto& sample : stats.history) {
@@ -784,6 +799,7 @@ int main() {
 
                 // Add a small instruction text for the user
                 ImGui::Separator();
+                ImGui::Text("The new analysis will take several seconds per core. It will stress each core one-by-one.");
                 ImGui::Text("Right-click a cell to pin its details window.");
                 ImGui::Separator();
 
@@ -830,14 +846,18 @@ int main() {
 
                         const CellStats& stats = analysis_results[i];
                         ImVec4 cell_color = ImVec4(0.1f, 0.1f, 0.1f, 1.0f);
-                        if (stats.dominant_core_id != -1 && stats.correlation_strength > .1f) {
-                            ImVec4 base_color = core_colors[stats.dominant_core_id];
+
+                        // UPDATED: Color the cell based on the TOP correlated core
+                        if (!stats.top_correlations.empty() && stats.top_correlations[0].correlation_strength > 0.1f) {
+                            const auto& top_corr = stats.top_correlations[0];
+                            ImVec4 base_color = core_colors[top_corr.core_id];
                             float h, s, v;
                             ImGui::ColorConvertRGBtoHSV(base_color.x, base_color.y, base_color.z, h, s, v);
-                            //s *= stats.correlation_strength;
-                            cell_color = ImVec4(h, s, v, 1.0f);
+                            // Optionally, scale saturation/value by strength
+                            s *= top_corr.correlation_strength;
                             ImGui::ColorConvertHSVtoRGB(h, s, v, cell_color.x, cell_color.y, cell_color.z);
                         }
+
                         ImGui::TableSetBgColor(ImGuiTableBgTarget_CellBg, ImGui::ColorConvertFloat4ToU32(cell_color));
                         bool is_interesting = stats.get_stddev() > 0.00001f;
                         ImVec4 text_color = is_interesting ? ImVec4(1.0f, 1.0f, 0.0f, 1.0f)  // Yellow for interesting

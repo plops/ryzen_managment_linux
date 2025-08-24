@@ -1,4 +1,3 @@
-// start of analysis_manager.hpp
 #pragma once
 
 #include "analysis.hpp"
@@ -25,7 +24,8 @@ public:
     void process_data_packet(const TimestampedData& data);
 
     // This will be called by a task submitted from the GUI.
-    void run_correlation_analysis(const StressTester* stress_tester);
+    // CHANGED: The stress_tester is no longer const, as we need to change its state.
+    void run_correlation_analysis(StressTester* stress_tester);
 
     // This will be called by a task submitted from the GUI.
     void reset_stats();

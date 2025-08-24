@@ -5,11 +5,24 @@
 #include <limits>
 #include <numeric>
 #include <deque>
+#include <algorithm> // Required for std::sort
 
 // A sample with its value and the precise time it was captured.
 struct TimestampedSample {
     long long timestamp_ns;
     float value;
+};
+
+// NEW: A struct to hold the correlation result for a single core.
+struct CoreCorrelationInfo {
+    int core_id = -1;
+    float correlation_strength = 0.0f;
+    float correlation_quality = 0.0f;
+
+    // Sort descending by strength, making it easy to find the top contributors.
+    bool operator<(const CoreCorrelationInfo& other) const {
+        return correlation_strength > other.correlation_strength;
+    }
 };
 
 // Holds the analysis results for a single float from the PM table
@@ -24,11 +37,10 @@ struct CellStats {
     // For correlation analysis
     static constexpr int HISTORY_SIZE = 2'000; // Increased to 400 for hover graph
     std::deque<TimestampedSample> history; // Use deque for efficient front removal
-    int dominant_core_id = -1;
-    float correlation_strength = 0.0f; // Represents the absolute difference between on-state and off-state means
 
-    // A metric indicating our confidence in the correlation result.
-    float correlation_quality = 0.0f;
+    // CHANGED: Replaced single dominant core with a vector for the top correlated cores.
+    std::vector<CoreCorrelationInfo> top_correlations;
+
 
     void add_sample(float value, long long timestamp_ns) {
         current_val = value;
@@ -61,8 +73,7 @@ struct CellStats {
         m2 = 0.0;
         count = 0;
         history.clear();
-        dominant_core_id = -1;
-        correlation_strength = 0.0f;
-        correlation_quality = 0.0f; // Reset the quality indicator as well
+        // CHANGED: Clear the new vector on reset.
+        top_correlations.clear();
     }
 };
