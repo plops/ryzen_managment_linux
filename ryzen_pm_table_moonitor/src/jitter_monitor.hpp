@@ -19,7 +19,7 @@ public:
      * @param report_interval The number of samples to collect before generating a report.
      * @param histogram_range_us The +/- range around the target period to capture in the histogram.
      */
-    JitterMonitor(long long target_period_us, int report_interval, int histogram_range_us = 100)
+    JitterMonitor(long long target_period_us, int report_interval, int histogram_range_us = 2000)
         : target_period_us_(target_period_us),
           report_interval_(report_interval),
           histogram_range_us_(histogram_range_us) {
