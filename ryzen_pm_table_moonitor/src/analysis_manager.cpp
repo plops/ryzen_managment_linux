@@ -1,6 +1,7 @@
 #include "analysis_manager.hpp"
 #include <spdlog/spdlog.h>
 #include <numeric>
+#include <algorithm> // For std::min
 
 void AnalysisManager::analysis_loop() {
     spdlog::info("Analysis thread started.");
@@ -48,6 +49,7 @@ void AnalysisManager::process_queue() {
     }
 }
 
+
 void AnalysisManager::run_correlation_analysis() {
     if (!stress_tester_ || !stress_tester_->is_running()) {
         spdlog::warn("Analysis skipped: stress tester is not running.");
@@ -70,6 +72,7 @@ void AnalysisManager::run_correlation_analysis() {
         int best_core_id = -1;
         float max_abs_diff = -1.0f;
 
+        // Find the core with the maximum absolute mean difference
         for (int core_id = 0; core_id < stress_tester_->get_core_count(); ++core_id) {
             const long long period_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(periods[core_id]).count();
             const long long work_duration_ns = period_ns / 3;
@@ -89,13 +92,13 @@ void AnalysisManager::run_correlation_analysis() {
                 }
             }
 
-            double on_mean = 0.0, off_mean = 0.0;
-            if (!on_state_samples.empty()) {
-                on_mean = std::accumulate(on_state_samples.begin(), on_state_samples.end(), 0.0) / on_state_samples.size();
+            // Skip if we don't have samples for both states to compare
+            if (on_state_samples.empty() || off_state_samples.empty()) {
+                continue;
             }
-            if (!off_state_samples.empty()) {
-                off_mean = std::accumulate(off_state_samples.begin(), off_state_samples.end(), 0.0) / off_state_samples.size();
-            }
+
+            double on_mean = std::accumulate(on_state_samples.begin(), on_state_samples.end(), 0.0) / on_state_samples.size();
+            double off_mean = std::accumulate(off_state_samples.begin(), off_state_samples.end(), 0.0) / off_state_samples.size();
 
             float diff = on_mean - off_mean;
             if (std::abs(diff) > max_abs_diff) {
@@ -103,8 +106,26 @@ void AnalysisManager::run_correlation_analysis() {
                 best_core_id = core_id;
             }
         }
+
         cell.dominant_core_id = best_core_id;
-        cell.correlation_strength = max_abs_diff;
+
+        // --- NEW: Normalization Logic ---
+        // If a dominant core was found, normalize its score.
+        if (best_core_id != -1) {
+            // Calculate the dynamic range of the signal from its history.
+            double range = cell.max_val - cell.min_val;
+
+            // Avoid division by zero if the signal was flat.
+            if (range > 1e-6) {
+                double normalized_strength = max_abs_diff / range;
+                // Clamp the value to the [0, 1] range to handle any floating point oddities.
+                cell.correlation_strength = std::min(1.0, normalized_strength);
+            } else {
+                cell.correlation_strength = 0.0f; // No range, so no correlation.
+            }
+        } else {
+            cell.correlation_strength = 0.0f; // No dominant core found.
+        }
     }
     spdlog::info("Correlation analysis complete.");
 }

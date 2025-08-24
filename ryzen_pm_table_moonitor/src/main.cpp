@@ -570,7 +570,7 @@ int main() {
 
                         const CellStats& stats = analysis_results[i];
                         ImVec4 cell_color = ImVec4(0.1f, 0.1f, 0.1f, 1.0f);
-                        if (stats.dominant_core_id != -1 && stats.correlation_strength > 0.001) {
+                        if (stats.dominant_core_id != -1 && stats.correlation_strength > .1f) {
                             ImVec4 base_color = core_colors[stats.dominant_core_id];
                             float h, s, v;
                             ImGui::ColorConvertRGBtoHSV(base_color.x, base_color.y, base_color.z, h, s, v);
