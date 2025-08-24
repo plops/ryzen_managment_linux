@@ -1,13 +1,4 @@
-#find_package(imgui QUIET)
-#if (NOT imgui_FOUND)
-#    FetchContent_Declare(
-#            imgui
-#            GIT_REPOSITORY https://github.com/ocornut/imgui.git
-#            # GIT_TAG        v1.92.2b
-#    )
-#    FetchContent_MakeAvailable(imgui)
-#endif ()
-set(imgui_SOURCE_DIR /home/kiel/src/imgui)
+set(imgui_SOURCE_DIR ${CMAKE_SOURCE_DIR}/extern/imgui)
 add_library(imgui STATIC
         ${imgui_SOURCE_DIR}/imgui.cpp
         ${imgui_SOURCE_DIR}/imgui_draw.cpp
