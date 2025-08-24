@@ -190,11 +190,31 @@ void RenderCellDetails(int index, const CellStats& stats, const StressTester& st
             ImPlot::SetupAxis(ImAxis_X1, nullptr, ImPlotAxisFlags_NoTickLabels);
             ImPlot::SetupAxisLimits(ImAxis_X1, timestamps.front(), timestamps.back(), ImGuiCond_Always);
 
-            ImPlot::SetupAxis(ImAxis_Y1, "Value", ImPlotAxisFlags_AutoFit);
-            float y_min = stats.min_val, y_max = stats.max_val;
-            float padding = (y_max - y_min) * 0.1f;
-            padding = (padding < 1e-5f) ? 1.0f : padding;
-            ImPlot::SetupAxisLimits(ImAxis_Y1, y_min - padding, y_max + padding, ImGuiCond_Always);
+            // UPDATED: specify the y1 range to be the 10-percentile to 90-percentile
+            // of the visible data plus 10% margin on both sides
+            ImPlot::SetupAxis(ImAxis_Y1, "Value"); // Use manual limits instead of AutoFit
+
+            // Create a copy for sorting to calculate percentiles
+            auto sorted_values = values;
+            std::sort(sorted_values.begin(), sorted_values.end());
+
+            // Calculate 10th and 90th percentile indices
+            size_t p10_idx = sorted_values.size() * 0.10;
+            size_t p90_idx = sorted_values.size() * 0.90;
+
+            // Handle case where p90_idx might be out of bounds for very small arrays
+            if (p90_idx >= sorted_values.size()) p90_idx = sorted_values.size() - 1;
+
+            float y_min_p = sorted_values[p10_idx];
+            float y_max_p = sorted_values[p90_idx];
+
+            // Calculate the margin as 10% of the percentile range
+            float margin = (y_max_p - y_min_p) * 0.1f;
+
+            // If the range is tiny, provide a default margin to avoid a flat view
+            margin = (margin < 1e-5f) ? 1.0f : margin;
+
+            ImPlot::SetupAxisLimits(ImAxis_Y1, y_min_p - margin, y_max_p + margin, ImGuiCond_Always);
 
             if (has_dominant_core) {
                 ImPlot::SetupAxis(ImAxis_Y2, "Core State", ImPlotAxisFlags_Opposite);
