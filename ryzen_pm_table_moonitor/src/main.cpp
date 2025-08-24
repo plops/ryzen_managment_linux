@@ -43,6 +43,24 @@ private:
     std::map<std::string, std::string> names_;
     std::mutex mutex_;
 
+    // Helper to convert chess index to decimal
+    static std::optional<int> from_chess_index(const std::string& chess_index) {
+        if (chess_index.length() < 2 || !std::isalpha(chess_index[0])) {
+            return std::nullopt;
+        }
+        char col_char = std::toupper(chess_index[0]);
+        if (col_char < 'A' || col_char > 'H') {
+            return std::nullopt;
+        }
+        int col = col_char - 'A';
+        try {
+            int row = std::stoi(chess_index.substr(1));
+            return row * 8 + col;
+        } catch (const std::exception&) {
+            return std::nullopt;
+        }
+    }
+
 public:
     explicit MeasurementNamer(std::string filepath) : filepath_(std::move(filepath)) {
         load_from_file();
@@ -54,6 +72,24 @@ public:
         char col = 'A' + (index % 8);
         int row = (index / 8);
         return fmt::format("{}{}", col, row);
+    }
+
+    // NEW: Parses an index string.
+    // If it starts with a digit, it's treated as a decimal index.
+    // Otherwise, it's treated as a chess index.
+    static std::optional<int> parse_index(const std::string& index_str) {
+        if (index_str.empty()) {
+            return std::nullopt;
+        }
+        if (std::isdigit(index_str[0])) {
+            try {
+                return std::stoi(index_str);
+            } catch (const std::exception&) {
+                return std::nullopt;
+            }
+        } else {
+            return from_chess_index(index_str);
+        }
     }
 
     void load_from_file() {
@@ -92,7 +128,13 @@ public:
         }
     }
 
-    std::optional<std::string> get_name(const std::string& chess_index) {
+    std::optional<std::string> get_name(const std::string& index_str) {
+        std::optional<int> decimal_index = parse_index(index_str);
+        if (!decimal_index) {
+            return std::nullopt;
+        }
+        std::string chess_index = to_chess_index(*decimal_index);
+
         std::lock_guard<std::mutex> lock(mutex_);
         auto it = names_.find(chess_index);
         if (it != names_.end()) {
@@ -101,7 +143,13 @@ public:
         return std::nullopt;
     }
 
-    void set_name(const std::string& chess_index, const std::string& name) {
+    void set_name(const std::string& index_str, const std::string& name) {
+        std::optional<int> decimal_index = parse_index(index_str);
+        if (!decimal_index) {
+            return;
+        }
+        std::string chess_index = to_chess_index(*decimal_index);
+
         std::lock_guard<std::mutex> lock(mutex_);
         if (name.empty()) {
             names_.erase(chess_index);
@@ -110,7 +158,6 @@ public:
         }
     }
 };
-
 
 // Helper function to create a scrolling buffer for plots
 struct ScrollingBuffer {
