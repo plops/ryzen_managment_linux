@@ -68,3 +68,9 @@ To update any of the dependencies (imgui, glfw, taskflow, implot) to a newer ver
    ```
 
 Repeat for each submodule you want to update.
+
+
+## Boost
+
+As I only need Boost PFR for this project (to display the table of the settings using introspection), I manually copied the necessary headers from Boost version 1.88.0-r1 into `src/boost`.
+
