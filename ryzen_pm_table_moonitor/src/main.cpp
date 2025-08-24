@@ -739,14 +739,49 @@ int main() {
                                     values.push_back(sample.value);
                                 }
 
-                                if (ImPlot::BeginPlot("##History", ImVec2(400, 200), ImPlotFlags_NoTitle | ImPlotFlags_NoLegend | ImPlotFlags_NoMouseText)) {
+                                bool has_dominant_core = stats.dominant_core_id != -1 && stress_tester.is_running();
+
+                                if (ImPlot::BeginPlot("##History", ImVec2(400, 200), ImPlotFlags_NoTitle | ImPlotFlags_NoLegend | ImPlotFlags_NoMouseText | (has_dominant_core ? ImPlotFlags_YAxis2 : 0) )) {
                                     ImPlot::SetupAxes(nullptr, nullptr, ImPlotAxisFlags_NoTickLabels, ImPlotAxisFlags_AutoFit);
+                                    ImPlot::SetupAxis(ImAxis_Y1, "Value", 0);
                                     float y_min = stats.min_val, y_max = stats.max_val;
                                     float padding = (y_max - y_min) * 0.1f;
                                     padding = (padding < 1e-5f) ? 1.0f : padding;
                                     ImPlot::SetupAxisLimits(ImAxis_Y1, y_min - padding, y_max + padding, ImGuiCond_Always);
                                     ImPlot::SetupAxisLimits(ImAxis_X1, timestamps.front(), timestamps.back(), ImGuiCond_Always);
+
+                                    ImPlot::SetAxis(ImAxis_Y1);
                                     ImPlot::PlotLine("Value", timestamps.data(), values.data(), (int)timestamps.size());
+
+                                    // --- Plot dominant core state on Y2 axis ---
+                                    if (has_dominant_core) {
+                                        std::vector<float> core_state_values;
+                                        core_state_values.reserve(stats.history.size());
+
+                                        const auto& periods = stress_tester.get_periods();
+                                        const auto stress_start_time = stress_tester.get_start_time();
+                                        const long long stress_start_time_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(stress_start_time.time_since_epoch()).count();
+                                        const long long period_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(periods[stats.dominant_core_id]).count();
+                                        const long long work_duration_ns = period_ns / 3;
+
+                                        for (const auto& sample : stats.history) {
+                                            long long time_since_start = sample.timestamp_ns - stress_start_time_ns;
+                                            float core_state = 0.0f;
+                                            if (time_since_start >= 0) {
+                                                long long phase_in_period = time_since_start % period_ns;
+                                                if (phase_in_period < work_duration_ns) {
+                                                    core_state = 1.0f;
+                                                }
+                                            }
+                                            core_state_values.push_back(core_state);
+                                        }
+
+                                        ImPlot::SetupAxis(ImAxis_Y2, "Core State", ImPlotAxisFlags_Opposite);
+                                        ImPlot::SetAxis(ImAxis_Y2);
+                                        ImPlot::SetupAxisLimits(ImAxis_Y2, -0.1, 1.1, ImGuiCond_Always);
+                                        ImPlot::PlotLine("Core State", timestamps.data(), core_state_values.data(), (int)timestamps.size());
+                                    }
+
                                     ImPlot::EndPlot();
                                 }
                             }
