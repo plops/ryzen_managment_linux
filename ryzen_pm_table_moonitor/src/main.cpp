@@ -198,9 +198,9 @@ void RenderCellDetails(int index, const CellStats& stats, const StressTester& st
             auto sorted_values = values;
             std::sort(sorted_values.begin(), sorted_values.end());
 
-            // Calculate 10th and 90th percentile indices
-            size_t p10_idx = sorted_values.size() * 0.10;
-            size_t p90_idx = sorted_values.size() * 0.90;
+            // Calculate 5th and 95th percentile indices
+            size_t p10_idx = sorted_values.size() * 0.05;
+            size_t p90_idx = sorted_values.size() * 0.95;
 
             // Handle case where p90_idx might be out of bounds for very small arrays
             if (p90_idx >= sorted_values.size()) p90_idx = sorted_values.size() - 1;
@@ -208,8 +208,8 @@ void RenderCellDetails(int index, const CellStats& stats, const StressTester& st
             float y_min_p = sorted_values[p10_idx];
             float y_max_p = sorted_values[p90_idx];
 
-            // Calculate the margin as 10% of the percentile range
-            float margin = (y_max_p - y_min_p) * 0.1f;
+            // Calculate the margin as 20% of the percentile range
+            float margin = (y_max_p - y_min_p) * 0.2f;
 
             // If the range is tiny, provide a default margin to avoid a flat view
             margin = (margin < 1e-5f) ? 1.0f : margin;
