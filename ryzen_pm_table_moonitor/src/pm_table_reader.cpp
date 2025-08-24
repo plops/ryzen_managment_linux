@@ -1,10 +1,9 @@
 #include "pm_table_reader.hpp"
+#include "jitter_monitor.hpp"
 #include <algorithm>
 #include <fstream>
-#include <span>
 #include <spdlog/spdlog.h>
 #include <chrono>
-
 #include <sched.h>
 #include <cerrno>
 #include <cstring>
@@ -93,10 +92,10 @@ void PMTableReader::read_loop() {
     buffer.resize(floats_to_read);
     spdlog::info("PMTableReader: Detected PM table size of {} bytes ({} floats).", bytes_to_read, floats_to_read);
 
-    // JitterMonitor jitter_monitor(target_period.count(), 5000 /* samples before reporting */, 2500);
+    JitterMonitor jitter_monitor(target_period.count(), 5000 /* samples before reporting */, 2500);
 
     auto next_wakeup = std::chrono::high_resolution_clock::now() + target_period;
-
+    std::chrono::time_point<std::chrono::steady_clock> last_read_time = std::chrono::steady_clock::now();
     while (running_) {
         pm_table_file.clear();
         pm_table_file.seekg(0, std::ios::beg);
@@ -120,8 +119,9 @@ void PMTableReader::read_loop() {
         } else {
             spdlog::warn("PMTableReader: No data read from PM table");
         }
-        // jitter_monitor.record_sample(period.count());
-
+        long long period_us = std::chrono::duration_cast<std::chrono::microseconds>(timestamp - last_read_time).count();
+        jitter_monitor.record_sample(period_us);
+        last_read_time = timestamp;
         next_wakeup += target_period;
     }
     spdlog::info("PMTableReader: Exiting read loop");
