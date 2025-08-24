@@ -33,7 +33,7 @@ inline bool set_thread_affinity(std::thread& thread, int core_id) {
 class StressTester {
 public:
     StressTester() {
-        num_cores_ = std::thread::hardware_concurrency() / 2;
+        num_cores_ = std::thread::hardware_concurrency();
         periods_ms_ = generate_prime_periods(num_cores_);
         // This vector holds the state of whether a thread *should* be busy.
         // It's used by the GUI and persists even when threads are stopped and started.
@@ -61,7 +61,7 @@ public:
             thread_is_actually_busy_flags_[i] = std::make_unique<std::atomic<bool>>(thread_busy_states_[i]);
             // Pass the new "is busy" flag to the worker
             threads_[i] = std::thread(&StressTester::stress_worker, this, i, periods_ms_[i], std::ref(*stop_flags_[i]), std::ref(*thread_is_actually_busy_flags_[i]));
-            set_thread_affinity(threads_[i], i * 2);
+            set_thread_affinity(threads_[i], i);
             spdlog::info("  - Core {} started with period {}ms", i, periods_ms_[i].count());
         }
     }
