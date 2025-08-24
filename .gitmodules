@@ -1,0 +1,12 @@
+[submodule "ryzen_pm_table_moonitor/extern/imgui"]
+	path = ryzen_pm_table_moonitor/extern/imgui
+	url = https://github.com/ocornut/imgui.git
+[submodule "ryzen_pm_table_moonitor/extern/glfw"]
+	path = ryzen_pm_table_moonitor/extern/glfw
+	url = https://github.com/glfw/glfw.git
+[submodule "ryzen_pm_table_moonitor/extern/taskflow"]
+	path = ryzen_pm_table_moonitor/extern/taskflow
+	url = https://github.com/taskflow/taskflow.git
+[submodule "ryzen_pm_table_moonitor/extern/implot"]
+	path = ryzen_pm_table_moonitor/extern/implot
+	url = https://github.com/epezent/implot.git
