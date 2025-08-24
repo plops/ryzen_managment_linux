@@ -68,6 +68,7 @@ public:
     void                       start_reading();
     void                       stop_reading();
     std::optional<PMTableData> get_latest_data();
+    std::optional<std::vector<float>> get_latest_raw_data();
 
 private:
     void read_loop();
@@ -77,4 +78,5 @@ private:
     std::thread reader_thread_;
     std::mutex  data_mutex_;
     PMTableData latest_data_;
+    std::vector<float> latest_raw_data_;
 };

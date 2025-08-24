@@ -71,6 +71,15 @@ std::optional<PMTableData> PMTableReader::get_latest_data() {
     return latest_data_;
 }
 
+// Implementation for the new raw data getter
+std::optional<std::vector<float>> PMTableReader::get_latest_raw_data() {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    if (latest_raw_data_.empty()) {
+        return std::nullopt;
+    }
+    return latest_raw_data_;
+}
+
 
 void PMTableReader::read_loop() {
     const std::chrono::microseconds target_period{1000};
@@ -132,7 +141,8 @@ void PMTableReader::read_loop() {
             PMTableData new_data = parse_pm_table_0x400005(buffer);
             {
                 std::lock_guard<std::mutex> lock(data_mutex_);
-                latest_data_ = std::move(new_data);
+                latest_data_     = std::move(new_data);
+                latest_raw_data_ = buffer;
             }
         } else {
             pm_table_file.clear(); // Clear EOF or other error flags
