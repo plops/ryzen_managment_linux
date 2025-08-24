@@ -1,6 +1,10 @@
 # ryzen_pm_table_moonitor
 
-This is a tool to monitor the power management table of AMD Ryzen processors on Linux systems. It provides a graphical interface to visualize various parameters and metrics related to the processor's power management.
+This is a tool to monitor the power management table of AMD Ryzen processors on Linux systems. It provides a graphical
+interface to visualize various parameters and metrics related to the processor's power management.
+
+It also includes a stress tester that puts periodic load on the different cores. An integrated correlation analysis
+helps to identify which parameters are connected to a particular core (e.g. its temperature or electrical power).
 
 
 ## Cloning the Repository with Submodules
