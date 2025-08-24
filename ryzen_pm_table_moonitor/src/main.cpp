@@ -564,6 +564,7 @@ int main() {
                     ImGui::TableHeadersRow();
 
                     for (int i = 0; i < analysis_results.size(); ++i) {
+                        ImGui::PushID(i);
                         if (i % num_columns == 0) ImGui::TableNextRow();
                         ImGui::TableSetColumnIndex(i % num_columns);
 
@@ -581,15 +582,13 @@ int main() {
                         bool is_interesting = stats.get_stddev() > 0.00001f;
                         ImVec4 text_color = is_interesting ? ImVec4(1.0f, 1.0f, 0.0f, 1.0f)  // Yellow for interesting
                                        : ImGui::GetStyle().Colors[ImGuiCol_Text]; // Default text color otherwise
-                        std::string formatted_text = fmt::format("{:8.2f}", stats.current_val);
-                        RenderTextWithOutline(formatted_text.c_str(), text_color);
-                        // if (is_interesting) {
-                        //     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 0.0f, 1.0f));
-                        // }
-                        // ImGui::Text("%8.2f", stats.current_val);
-                        // if (is_interesting) {
-                        //     ImGui::PopStyleColor();
-                        // }
+                        if (is_interesting) {
+                            std::string formatted_text = fmt::format("{:8.2f}", stats.current_val);
+                            RenderTextWithOutline(formatted_text.c_str(), text_color);
+                        } else {
+                            ImGui::Text("%8.2f", stats.current_val);
+                        }
+
                         if (ImGui::IsItemHovered()) {
                             ImGui::BeginTooltip();
                             ImGui::Text("Index: %5d, Bytes: %5d .. %5d", i, i * 4, i * 4 + 3);
@@ -606,6 +605,7 @@ int main() {
                             ImGui::Text("On/Off Mean Diff: %12.4f", stats.correlation_strength);
                             ImGui::EndTooltip();
                         }
+                        ImGui::PopID();
                     }
                     ImGui::EndTable();
                 }
