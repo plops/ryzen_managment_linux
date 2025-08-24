@@ -1,7 +1,7 @@
 #include "analysis_manager.hpp"
 #include <spdlog/spdlog.h>
 #include <numeric>
-#include <algorithm> // For std::min
+#include <algorithm> // For std::sort
 
 void AnalysisManager::analysis_loop() {
     spdlog::info("Analysis thread started.");
@@ -49,6 +49,18 @@ void AnalysisManager::process_queue() {
     }
 }
 
+// A small struct to hold the analysis result for a single core's stress pattern
+struct CoreCorrelationResult {
+    int core_id = -1;
+    double abs_diff = 0.0;
+    size_t on_samples = 0;
+    size_t off_samples = 0;
+
+    // Sort in descending order of correlation strength
+    bool operator<(const CoreCorrelationResult& other) const {
+        return abs_diff > other.abs_diff;
+    }
+};
 
 void AnalysisManager::run_correlation_analysis() {
     if (!stress_tester_ || !stress_tester_->is_running()) {
@@ -69,10 +81,9 @@ void AnalysisManager::run_correlation_analysis() {
 
     for (size_t i = 0; i < analysis_results_.size(); ++i) {
         auto& cell = analysis_results_[i];
-        int best_core_id = -1;
-        float max_abs_diff = -1.0f;
 
-        // Find the core with the maximum absolute mean difference
+        // --- Step 1: Calculate correlation strength for ALL cores ---
+        std::vector<CoreCorrelationResult> core_results;
         for (int core_id = 0; core_id < stress_tester_->get_core_count(); ++core_id) {
             const long long period_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(periods[core_id]).count();
             const long long work_duration_ns = period_ns / 3;
@@ -92,40 +103,57 @@ void AnalysisManager::run_correlation_analysis() {
                 }
             }
 
-            // Skip if we don't have samples for both states to compare
-            if (on_state_samples.empty() || off_state_samples.empty()) {
-                continue;
-            }
+            if (on_state_samples.empty() || off_state_samples.empty()) continue;
 
             double on_mean = std::accumulate(on_state_samples.begin(), on_state_samples.end(), 0.0) / on_state_samples.size();
             double off_mean = std::accumulate(off_state_samples.begin(), off_state_samples.end(), 0.0) / off_state_samples.size();
 
-            float diff = on_mean - off_mean;
-            if (std::abs(diff) > max_abs_diff) {
-                max_abs_diff = std::abs(diff);
-                best_core_id = core_id;
-            }
+            core_results.push_back({core_id, std::abs(on_mean - off_mean), on_state_samples.size(), off_state_samples.size()});
         }
 
-        cell.dominant_core_id = best_core_id;
+        // --- Step 2: Analyze the results to find the best, normalize, and calculate quality ---
+        if (core_results.empty()) {
+            cell.dominant_core_id = -1;
+            cell.correlation_strength = 0.0f;
+            cell.correlation_quality = 0.0f;
+            continue;
+        }
 
-        // --- NEW: Normalization Logic ---
-        // If a dominant core was found, normalize its score.
-        if (best_core_id != -1) {
-            // Calculate the dynamic range of the signal from its history.
-            double range = cell.max_val - cell.min_val;
+        // Sort to easily find the best and second-best
+        std::sort(core_results.begin(), core_results.end());
+        const auto& best_result = core_results[0];
 
-            // Avoid division by zero if the signal was flat.
-            if (range > 1e-6) {
-                double normalized_strength = max_abs_diff / range;
-                // Clamp the value to the [0, 1] range to handle any floating point oddities.
-                cell.correlation_strength = std::min(1.0, normalized_strength);
-            } else {
-                cell.correlation_strength = 0.0f; // No range, so no correlation.
-            }
+        cell.dominant_core_id = best_result.core_id;
+
+        // Normalize strength based on signal range
+        double range = cell.max_val - cell.min_val;
+        if (range > 1e-6) {
+            cell.correlation_strength = std::min(1.0, best_result.abs_diff / range);
         } else {
-            cell.correlation_strength = 0.0f; // No dominant core found.
+            cell.correlation_strength = 0.0f;
         }
+
+        // --- Step 3: Calculate the Quality Indicator ---
+
+        // A) Separation Factor: How much better is the best vs. the second best?
+        double separation_factor = 1.0; // Assume perfect separation by default
+        if (core_results.size() > 1) {
+            const auto& second_best = core_results[1];
+            if (best_result.abs_diff > 1e-6) {
+                // Formula: 1 - (second_best / best)
+                separation_factor = 1.0 - (second_best.abs_diff / best_result.abs_diff);
+            } else {
+                separation_factor = 0.0; // If best is zero, there's no separation
+            }
+        }
+
+        // B) Confidence Factor: Is the sample count high enough?
+        const double TARGET_SAMPLES_PER_STATE = 30.0; // A reasonable number for statistical confidence
+        size_t min_samples = std::min(best_result.on_samples, best_result.off_samples);
+        double confidence_factor = std::min(1.0, min_samples / TARGET_SAMPLES_PER_STATE);
+
+        // Final Quality = Separation * Confidence
+        cell.correlation_quality = static_cast<float>(separation_factor * confidence_factor);
     }
     spdlog::info("Correlation analysis complete.");
 }

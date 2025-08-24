@@ -602,7 +602,15 @@ int main() {
                             ImGui::Text("StdDev: %8.3f", stats.get_stddev());
                             ImGui::Separator();
                             ImGui::Text("Dominant Core: %d", stats.dominant_core_id);
-                            ImGui::Text("On/Off Mean Diff: %12.4f", stats.correlation_strength);
+                            ImGui::Text("Corr. Strength:   %.3f", stats.correlation_strength);
+
+                            //  Display the quality score and color indicator
+                            ImGui::Text("Corr. Quality:    %.3f", stats.correlation_quality);
+                            ImVec4 quality_color = ImVec4(1.0f, 0.3f, 0.3f, 1.0f); // Red
+                            if (stats.correlation_quality > 0.75f) quality_color = ImVec4(0.3f, 1.0f, 0.3f, 1.0f); // Green
+                            else if (stats.correlation_quality > 0.4f) quality_color = ImVec4(1.0f, 1.0f, 0.3f, 1.0f); // Yellow
+                            ImGui::TextColored(quality_color, "Quality Indicator");
+
                             ImGui::EndTooltip();
                         }
                         ImGui::PopID();

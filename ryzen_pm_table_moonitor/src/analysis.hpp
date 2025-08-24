@@ -27,6 +27,9 @@ struct CellStats {
     int dominant_core_id = -1;
     float correlation_strength = 0.0f; // Represents the absolute difference between on-state and off-state means
 
+    // NEW: A metric indicating our confidence in the correlation result.
+    float correlation_quality = 0.0f;
+
     void add_sample(float value, long long timestamp_ns) {
         current_val = value;
         if (value < min_val) min_val = value;
@@ -60,5 +63,6 @@ struct CellStats {
         history.clear();
         dominant_core_id = -1;
         correlation_strength = 0.0f;
+        correlation_quality = 0.0f; // Reset the quality indicator as well
     }
 };
