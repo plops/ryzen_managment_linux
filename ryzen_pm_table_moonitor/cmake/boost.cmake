@@ -1,5 +1,5 @@
 # Add Boost.PFR (header-only, so just find Boost and add include)
-find_package(Boost)
+find_package(Boost QUIET)
 if(Boost_FOUND)
     message(STATUS "Boost found: ${Boost_INCLUDE_DIRS}")
     include_directories(${Boost_INCLUDE_DIRS})
