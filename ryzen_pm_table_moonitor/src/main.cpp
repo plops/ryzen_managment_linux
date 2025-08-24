@@ -96,6 +96,36 @@ ImVec4 generate_color_for_core(int core_id) {
     return color;
 }
 
+void RenderTextWithOutline(const char* text, const ImVec4& text_color)
+{
+    // Get the current draw list and cursor position
+    ImDrawList* draw_list = ImGui::GetWindowDrawList();
+    ImVec2 text_pos = ImGui::GetCursorScreenPos();
+
+    // Calculate text size to advance the cursor and for hover detection
+    ImVec2 text_size = ImGui::CalcTextSize(text);
+
+    // Define colors
+    ImU32 outline_col = IM_COL32(0, 0, 0, 255); // Black
+    ImU32 text_col = ImGui::ColorConvertFloat4ToU32(text_color);
+
+    // --- Render the outline ---
+    // A 1-pixel outline is achieved by drawing the text in black at 4 diagonal locations.
+    draw_list->AddText(ImVec2(text_pos.x - 1, text_pos.y - 1), outline_col, text);
+    draw_list->AddText(ImVec2(text_pos.x + 1, text_pos.y - 1), outline_col, text);
+    draw_list->AddText(ImVec2(text_pos.x - 1, text_pos.y + 1), outline_col, text);
+    draw_list->AddText(ImVec2(text_pos.x + 1, text_pos.y + 1), outline_col, text);
+
+    // --- Render the main text ---
+    draw_list->AddText(text_pos, text_col, text);
+
+    // --- Advance cursor and handle interaction ---
+    // Use an InvisibleButton over the same area. This does two things:
+    // 1. It advances the ImGui cursor by the size of the text, so the next item won't overlap.
+    // 2. It makes the area interactive, so ImGui::IsItemHovered() works correctly.
+    ImGui::InvisibleButton(text, text_size);
+}
+
 int main() {
     spdlog::info("Starting PM Table Monitor");
 
@@ -271,8 +301,11 @@ int main() {
         ImGui::SetNextWindowPos(viewport->Pos);
         ImGui::SetNextWindowSize( viewport->Size);
 
+#ifdef NDEBUG
         ImGui::Begin("PM Table Monitor", nullptr, flags);
-
+#else
+        ImGui::Begin("PM Table Monitor");
+#endif
         if (ImGui::BeginTabBar("MainTabBar")) {
 
             // --- Tab 1: Decoded View ---
@@ -546,13 +579,17 @@ int main() {
                         }
                         ImGui::TableSetBgColor(ImGuiTableBgTarget_CellBg, ImGui::ColorConvertFloat4ToU32(cell_color));
                         bool is_interesting = stats.get_stddev() > 0.00001f;
-                        if (is_interesting) {
-                            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 0.0f, 1.0f));
-                        }
-                        ImGui::Text("%8.2f", stats.current_val);
-                        if (is_interesting) {
-                            ImGui::PopStyleColor();
-                        }
+                        ImVec4 text_color = is_interesting ? ImVec4(1.0f, 1.0f, 0.0f, 1.0f)  // Yellow for interesting
+                                       : ImGui::GetStyle().Colors[ImGuiCol_Text]; // Default text color otherwise
+                        std::string formatted_text = fmt::format("{:8.2f}", stats.current_val);
+                        RenderTextWithOutline(formatted_text.c_str(), text_color);
+                        // if (is_interesting) {
+                        //     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 0.0f, 1.0f));
+                        // }
+                        // ImGui::Text("%8.2f", stats.current_val);
+                        // if (is_interesting) {
+                        //     ImGui::PopStyleColor();
+                        // }
                         if (ImGui::IsItemHovered()) {
                             ImGui::BeginTooltip();
                             ImGui::Text("Index: %5d, Bytes: %5d .. %5d", i, i * 4, i * 4 + 3);
