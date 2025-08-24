@@ -34,13 +34,15 @@ void PMTableReader::read_loop() {
 
     int                                                bytes_to_read    = buffer.size() * sizeof(float);
     bool                                               first_read       = true;
-    int                                                target_period_us = 16600;
+    int                                                target_period_us = 1000; //16600;
     double                                             period_estimate  = target_period_us;
     double                                             alpha            = .1;
     std::chrono::time_point<std::chrono::system_clock> old_time         = std::chrono::system_clock::now();
     int                                                count            = 0;
     // std::vector<int> wait_histogram(300, 0);
     // int max_wait = 0;
+    std::ifstream                                      pm_table_file(pm_table_path_, std::ios::binary);
+
     while (running_) {
         // if (!first_read) {
         //     // busy wait to fill period to 1ms
@@ -59,7 +61,9 @@ void PMTableReader::read_loop() {
         //     wait_histogram[wait_count]++;
         // }
         std::chrono::time_point<std::chrono::system_clock> start_time = std::chrono::high_resolution_clock::now();
-        std::ifstream                                      pm_table_file(pm_table_path_, std::ios::binary);
+        // rewind to the beginning of the file before each read
+        pm_table_file.clear(); // Clear any EOF flags
+        pm_table_file.seekg(0, std::ios::beg);
         pm_table_file.read(reinterpret_cast<char *>(buffer.data()), bytes_to_read);
         int bytes_read = pm_table_file.gcount();
         spdlog::trace("read {} bytes from PM table", bytes_read);
