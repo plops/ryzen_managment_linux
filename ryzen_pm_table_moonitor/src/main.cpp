@@ -525,7 +525,7 @@ int main() {
                 // --- Get pre-computed results and render ---
                 auto analysis_results = analysis_manager.get_analysis_results();
 
-                const int num_columns = 32;
+                const int num_columns = 16;
                 if (ImGui::BeginTable("AnalysisGrid", num_columns, ImGuiTableFlags_Borders | ImGuiTableFlags_SizingFixedFit)) {
                     for (int col = 0; col < num_columns; ++col) ImGui::TableSetupColumn(("+" + std::to_string(col)).c_str());
                     ImGui::TableHeadersRow();
@@ -545,19 +545,26 @@ int main() {
                             ImGui::ColorConvertHSVtoRGB(h, s, v, cell_color.x, cell_color.y, cell_color.z);
                         }
                         ImGui::TableSetBgColor(ImGuiTableBgTarget_CellBg, ImGui::ColorConvertFloat4ToU32(cell_color));
-                        ImGui::Text("%7.2f", stats.current_val);
+                        bool is_interesting = stats.get_stddev() > 0.00001f;
+                        if (is_interesting) {
+                            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 0.0f, 1.0f));
+                        }
+                        ImGui::Text("%8.2f", stats.current_val);
+                        if (is_interesting) {
+                            ImGui::PopStyleColor();
+                        }
                         if (ImGui::IsItemHovered()) {
                             ImGui::BeginTooltip();
                             ImGui::Text("Index: %d", i);
                             ImGui::Separator();
-                            ImGui::Text("Live: %6.3f", stats.current_val);
-                            ImGui::Text("Min:  %6.3f", stats.min_val);
-                            ImGui::Text("Max:  %6.3f", stats.max_val);
-                            ImGui::Text("Mean: %6.3f", stats.mean);
-                            ImGui::Text("StdDev: %3.3f", stats.get_stddev());
+                            ImGui::Text("Live: %8.3f", stats.current_val);
+                            ImGui::Text("Min:  %8.3f", stats.min_val);
+                            ImGui::Text("Max:  %8.3f", stats.max_val);
+                            ImGui::Text("Mean: %8.3f", stats.mean);
+                            ImGui::Text("StdDev: %8.3f", stats.get_stddev());
                             ImGui::Separator();
                             ImGui::Text("Dominant Core: %d", stats.dominant_core_id);
-                            ImGui::Text("Corr. Strength: %3.2f", stats.correlation_strength);
+                            ImGui::Text("Corr. Strength: %8.2f", stats.correlation_strength);
                             ImGui::EndTooltip();
                         }
                     }
