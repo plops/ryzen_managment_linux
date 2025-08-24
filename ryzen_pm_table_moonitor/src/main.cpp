@@ -536,11 +536,11 @@ int main() {
 
                         const CellStats& stats = analysis_results[i];
                         ImVec4 cell_color = ImVec4(0.1f, 0.1f, 0.1f, 1.0f);
-                        if (stats.dominant_core_id != -1 && stats.correlation_strength > 0.01) {
+                        if (stats.dominant_core_id != -1 && stats.correlation_strength > 0.001) {
                             ImVec4 base_color = core_colors[stats.dominant_core_id];
                             float h, s, v;
                             ImGui::ColorConvertRGBtoHSV(base_color.x, base_color.y, base_color.z, h, s, v);
-                            s *= stats.correlation_strength;
+                            //s *= stats.correlation_strength;
                             cell_color = ImVec4(h, s, v, 1.0f);
                             ImGui::ColorConvertHSVtoRGB(h, s, v, cell_color.x, cell_color.y, cell_color.z);
                         }
