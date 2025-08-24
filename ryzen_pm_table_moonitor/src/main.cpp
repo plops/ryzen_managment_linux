@@ -725,7 +725,7 @@ int main() {
                             else if (stats.correlation_quality > 0.4f) quality_color = ImVec4(1.0f, 1.0f, 0.3f, 1.0f); // Yellow
                             ImGui::TextColored(quality_color, "Quality Indicator");
 
-                            // --- Realtime hover graph ---
+                             // --- Realtime hover graph ---
                             ImGui::Separator();
                             ImGui::Text("History (%zu samples):", stats.history.size());
                             if (stats.history.size() > 1) {
@@ -742,18 +742,26 @@ int main() {
                                 bool has_dominant_core = stats.dominant_core_id != -1 && stress_tester.is_running();
 
                                 if (ImPlot::BeginPlot("##History", ImVec2(400, 200), ImPlotFlags_NoTitle | ImPlotFlags_NoLegend | ImPlotFlags_NoMouseText | (has_dominant_core ? ImPlotFlags_YAxis2 : 0) )) {
-                                    ImPlot::SetupAxes(nullptr, nullptr, ImPlotAxisFlags_NoTickLabels, ImPlotAxisFlags_AutoFit);
-                                    ImPlot::SetupAxis(ImAxis_Y1, "Value", 0);
+
+                                    // --- Phase 1: Setup all axes before plotting ---
+                                    ImPlot::SetupAxis(ImAxis_X1, nullptr, ImPlotAxisFlags_NoTickLabels);
+                                    ImPlot::SetupAxisLimits(ImAxis_X1, timestamps.front(), timestamps.back(), ImGuiCond_Always);
+
+                                    ImPlot::SetupAxis(ImAxis_Y1, "Value", ImPlotAxisFlags_AutoFit);
                                     float y_min = stats.min_val, y_max = stats.max_val;
                                     float padding = (y_max - y_min) * 0.1f;
                                     padding = (padding < 1e-5f) ? 1.0f : padding;
                                     ImPlot::SetupAxisLimits(ImAxis_Y1, y_min - padding, y_max + padding, ImGuiCond_Always);
-                                    ImPlot::SetupAxisLimits(ImAxis_X1, timestamps.front(), timestamps.back(), ImGuiCond_Always);
 
+                                    if (has_dominant_core) {
+                                        ImPlot::SetupAxis(ImAxis_Y2, "Core State", ImPlotAxisFlags_Opposite);
+                                        ImPlot::SetupAxisLimits(ImAxis_Y2, -0.1, 1.1, ImGuiCond_Always);
+                                    }
+
+                                    // --- Phase 2: Plot all data ---
                                     ImPlot::SetAxis(ImAxis_Y1);
                                     ImPlot::PlotLine("Value", timestamps.data(), values.data(), (int)timestamps.size());
 
-                                    // --- Plot dominant core state on Y2 axis ---
                                     if (has_dominant_core) {
                                         std::vector<float> core_state_values;
                                         core_state_values.reserve(stats.history.size());
@@ -776,9 +784,7 @@ int main() {
                                             core_state_values.push_back(core_state);
                                         }
 
-                                        ImPlot::SetupAxis(ImAxis_Y2, "Core State", ImPlotAxisFlags_Opposite);
                                         ImPlot::SetAxis(ImAxis_Y2);
-                                        ImPlot::SetupAxisLimits(ImAxis_Y2, -0.1, 1.1, ImGuiCond_Always);
                                         ImPlot::PlotLine("Core State", timestamps.data(), core_state_values.data(), (int)timestamps.size());
                                     }
 

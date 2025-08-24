@@ -108,7 +108,7 @@ private:
 
     std::vector<std::chrono::milliseconds> generate_prime_periods(unsigned int n) {
         std::vector<std::chrono::milliseconds> primes;
-        int num = 101;
+        int num = 11;
         while (primes.size() < n) {
             bool is_prime = true;
             for (int i = 2; i * i <= num; ++i) {
@@ -118,7 +118,7 @@ private:
                 }
             }
             if (is_prime) {
-                primes.push_back(std::chrono::milliseconds(num));
+                primes.push_back(std::chrono::milliseconds(num*10));
             }
             num += 2;
         }
