@@ -34,7 +34,9 @@ void PMTableReader::read_loop() {
 
     int                                                bytes_to_read    = buffer.size() * sizeof(float);
     bool                                               first_read       = true;
-    int                                                target_period_us = 1000; //16600;
+    const std::chrono::microseconds target_period{1000};
+    int target_period_us = target_period.count();
+    auto next_wakeup = std::chrono::high_resolution_clock::now();
     double                                             period_estimate  = target_period_us;
     double                                             alpha            = .1;
     std::chrono::time_point<std::chrono::system_clock> old_time         = std::chrono::system_clock::now();
@@ -61,9 +63,7 @@ void PMTableReader::read_loop() {
         //     wait_histogram[wait_count]++;
         // }
         std::chrono::time_point<std::chrono::system_clock> start_time = std::chrono::high_resolution_clock::now();
-        // rewind to the beginning of the file before each read
-        pm_table_file.clear(); // Clear any EOF flags
-        pm_table_file.seekg(0, std::ios::beg);
+
         pm_table_file.read(reinterpret_cast<char *>(buffer.data()), bytes_to_read);
         int bytes_read = pm_table_file.gcount();
         spdlog::trace("read {} bytes from PM table", bytes_read);
@@ -108,9 +108,18 @@ void PMTableReader::read_loop() {
         auto end_time   = std::chrono::high_resolution_clock::now();
         auto duration   = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
         auto sleep_time = std::chrono::microseconds((target_period_us * 10)/10) - duration;
-        if (sleep_time.count() > 0) {
-            std::this_thread::sleep_for(sleep_time);
-        }
+
+        // rewind to the beginning of the file before each read
+        pm_table_file.clear(); // Clear any EOF flags
+        pm_table_file.seekg(0, std::ios::beg);
+
+        // Calculate the next absolute time point for waking up
+        next_wakeup += target_period;
+        // Sleep until that exact time
+        std::this_thread::sleep_until(next_wakeup);
+        // if (sleep_time.count() > 0) {
+        //     std::this_thread::sleep_for(sleep_time);
+        // }
     }
     spdlog::info("PMTableReader: Exiting read loop");
 }
