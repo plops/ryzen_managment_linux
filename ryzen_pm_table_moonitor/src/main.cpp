@@ -807,6 +807,22 @@ int main() {
                 if (stress_tester.is_running()) {
                     ImGui::Separator();
                     ImGui::TextUnformatted("Active Stress Threads:");
+
+                    // --- NEW BUTTONS TO ENABLE/DISABLE ALL CORES ---
+                    ImGui::SameLine();
+                    if (ImGui::Button("Enable All")) {
+                        for (int i = 0; i < stress_tester.get_core_count(); ++i) {
+                            stress_tester.set_thread_busy_state(i, true);
+                        }
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Disable All")) {
+                        for (int i = 0; i < stress_tester.get_core_count(); ++i) {
+                            stress_tester.set_thread_busy_state(i, false);
+                        }
+                    }
+                    // --- END OF NEW CODE ---
+
                     for (int i = 0; i < stress_tester.get_core_count(); ++i) {
                         ImGui::SameLine();
                         bool is_busy = stress_tester.get_thread_busy_state(i);
