@@ -30,6 +30,7 @@ git submodule add https://github.com/glfw/glfw.git extern/glfw
 git submodule add https://github.com/taskflow/taskflow.git extern/taskflow
 git submodule add https://github.com/epezent/implot.git extern/implot
 git submodule add https://github.com/gabime/spdlog extern/spdlog
+git submodule add https://github.com/marzer/tomlplusplus extern/tomlplusplus
 ```
 
 Stage and commit the changes:

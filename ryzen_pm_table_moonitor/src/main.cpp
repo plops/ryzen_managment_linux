@@ -3,6 +3,9 @@
 #include <spdlog/spdlog.h>
 #include <thread>
 #include <vector>
+#include <map>
+#include <fstream>
+#include <optional>
 
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
@@ -22,10 +25,91 @@
 #include <atomic> // For the stop flag
 #include <algorithm> // For std::find
 
+// Include the toml++ header.
+// Make sure toml.hpp is in your project's include path.
+#include "toml++/toml.hpp"
+
+
 // Required headers for thread scheduling and affinity
 #include <sched.h>
 #include <pthread.h>
 #include <cstring> // For strerror
+
+
+// NEW: A class to manage loading, saving, and accessing measurement names
+class MeasurementNamer {
+private:
+    std::string filepath_;
+    std::map<std::string, std::string> names_;
+    std::mutex mutex_;
+
+public:
+    explicit MeasurementNamer(std::string filepath) : filepath_(std::move(filepath)) {
+        load_from_file();
+    }
+
+    // Convert an integer index to its chess notation (e.g., 263 -> "H32")
+    static std::string to_chess_index(int index) {
+        if (index < 0) return "Invalid";
+        char col = 'A' + (index % 8);
+        int row = (index / 8);
+        return fmt::format("{}{}", col, row);
+    }
+
+    void load_from_file() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        try {
+            toml::table tbl = toml::parse_file(filepath_);
+            if (auto names_table = tbl["names"].as_table()) {
+                for (auto&& [key, val] : *names_table) {
+                    if (val.is_string()) {
+                        names_[std::string(key)] = val.as_string()->get();
+                    }
+                }
+                spdlog::info("Successfully loaded {} names from {}", names_.size(), filepath_);
+            }
+        } catch (const toml::parse_error& err) {
+            spdlog::warn("Could not load names file '{}': {}. A new one will be created on save.", filepath_, err.description());
+        }
+    }
+
+    void save_to_file() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        toml::table names_table;
+        for (const auto& [key, val] : names_) {
+            names_table.insert(key, val);
+        }
+
+        toml::table root_table;
+        root_table.insert("names", names_table);
+
+        std::ofstream file(filepath_);
+        if (file.is_open()) {
+            file << root_table;
+            spdlog::info("Saved names to {}", filepath_);
+        } else {
+            spdlog::error("Failed to open {} for writing.", filepath_);
+        }
+    }
+
+    std::optional<std::string> get_name(const std::string& chess_index) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = names_.find(chess_index);
+        if (it != names_.end()) {
+            return it->second;
+        }
+        return std::nullopt;
+    }
+
+    void set_name(const std::string& chess_index, const std::string& name) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (name.empty()) {
+            names_.erase(chess_index);
+        } else {
+            names_[chess_index] = name;
+        }
+    }
+};
 
 
 // Helper function to create a scrolling buffer for plots
@@ -133,13 +217,32 @@ void RenderTextWithOutline(const char* text, const ImVec4& text_color)
     ImGui::InvisibleButton(text, text_size);
 }
 
+
 // Helper function to render the detailed content for a given cell.
-// This will be used by both the hover tooltip and the new pinned windows.
-// UPDATED to show top 4 cores
-void RenderCellDetails(int index, const CellStats& stats, const StressTester& stress_tester, const std::vector<ImVec4>& core_colors) {
+// UPDATED to include the MeasurementNamer for displaying and editing names.
+void RenderCellDetails(int index, const CellStats& stats, const StressTester& stress_tester, const std::vector<ImVec4>& core_colors, MeasurementNamer& namer) {
+    std::string chess_index = MeasurementNamer::to_chess_index(index);
     ImGui::Text("Index: %5d, Bytes: %5d .. %5d", index, index * 4, index * 4 + 3);
-    // Chess index (row/col) A..H, 1..64
-    ImGui::Text("Chess Index: %c%d", 'A' + (index % 8), (index / 8));
+    ImGui::Text("Chess Index: %s", chess_index.c_str());
+
+    // --- NEW: Display and Edit Measurement Name ---
+    std::string current_name = namer.get_name(chess_index).value_or("");
+    static char name_buffer[128]; // Static buffer for editing
+    strncpy(name_buffer, current_name.c_str(), sizeof(name_buffer) - 1);
+    name_buffer[sizeof(name_buffer) - 1] = '\0'; // Ensure null termination
+
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 50); // Adjust width
+    if (ImGui::InputText("Name", name_buffer, sizeof(name_buffer), ImGuiInputTextFlags_EnterReturnsTrue)) {
+        namer.set_name(chess_index, std::string(name_buffer));
+        namer.save_to_file();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Save")) {
+        namer.set_name(chess_index, std::string(name_buffer));
+        namer.save_to_file();
+    }
+
+
     ImGui::Separator();
     ImGui::Text("Live: %8.3f", stats.current_val);
     ImGui::Text("Min:  %8.3f", stats.min_val);
@@ -148,7 +251,7 @@ void RenderCellDetails(int index, const CellStats& stats, const StressTester& st
     ImGui::Text("StdDev: %8.3f", stats.get_stddev());
     ImGui::Separator();
 
-    // --- NEW: Display top 4 correlated cores in a table ---
+    // --- Display top 4 correlated cores in a table ---
     ImGui::Text("Top Correlated Cores:");
     if (ImGui::BeginTable("CorrTable", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchSame)) {
         ImGui::TableSetupColumn("Core");
@@ -314,6 +417,10 @@ public:
 
 int main() {
     spdlog::info("Starting PM Table Monitor");
+
+    // NEW: Instantiate the namer and load data from the TOML file.
+    // Ensure "pm_table_names.toml" is in the same directory as the executable.
+    MeasurementNamer namer("pm_table_names.toml");
 
     // Setup window
     if (!glfwInit()) {
@@ -526,7 +633,7 @@ int main() {
                 ImGui::Begin(window_title.c_str(), &window_is_open);
 
                 // Call our refactored helper function to draw the content
-                RenderCellDetails(pinned_index, analysis_results[pinned_index], stress_tester, core_colors);
+                RenderCellDetails(pinned_index, analysis_results[pinned_index], stress_tester, core_colors, namer);
 
                 ImGui::End();
             }
@@ -872,7 +979,14 @@ int main() {
 
                 const int num_columns = 16;
                 if (ImGui::BeginTable("AnalysisGrid", num_columns, ImGuiTableFlags_Borders | ImGuiTableFlags_SizingFixedFit)) {
-                    for (int col = 0; col < num_columns; ++col) ImGui::TableSetupColumn(("+" + std::to_string(col)).c_str());
+                    for (int col = 0; col < num_columns; ++col) {
+                        // instead of column numbers, show A, B, C... for first 26 columns
+                        if (col < 26) {
+                            ImGui::TableSetupColumn(std::string(1, 'A' + col).c_str());
+                           // ImGui::TableSetupColumn(("+" + std::to_string(col)).c_str());
+                        }
+                    }
+
                     ImGui::TableHeadersRow();
 
                     for (int i = 0; i < analysis_results.size(); ++i) {
@@ -913,7 +1027,8 @@ int main() {
                         }
                         if (ImGui::IsItemHovered()) {
                             ImGui::BeginTooltip();
-                            RenderCellDetails(i, stats, stress_tester, core_colors);
+                            // UPDATED: Pass the namer object to the render function
+                            RenderCellDetails(i, stats, stress_tester, core_colors, namer);
                             ImGui::EndTooltip();
                         }
                         ImGui::PopID();

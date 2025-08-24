@@ -14,6 +14,7 @@ include(cmake/glfw.cmake)
 include(cmake/imgui.cmake)
 include(cmake/implot.cmake)
 include(cmake/taskflow.cmake)
+include(cmake/tomlplusplus.cmake)
 
 add_executable(pm_monitor
         src/main.cpp
@@ -27,6 +28,7 @@ target_link_libraries(pm_monitor PRIVATE
         implot
         glfw
         spdlog::spdlog
+        tomlplusplus::tomlplusplus
 )
 
 if (WIN32)
@@ -34,3 +36,11 @@ if (WIN32)
 else ()
     target_link_libraries(pm_monitor PRIVATE GL)
 endif ()
+
+# Command to copy the .toml file to the output directory
+add_custom_command(TARGET pm_monitor POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/pm_table_names.toml
+        $<TARGET_FILE_DIR:pm_monitor>
+        COMMENT "Copying pm_table_names.toml to output directory"
+)

@@ -13,3 +13,6 @@
 [submodule "ryzen_pm_table_moonitor/extern/spdlog"]
 	path = ryzen_pm_table_moonitor/extern/spdlog
 	url = https://github.com/gabime/spdlog
+[submodule "ryzen_pm_table_moonitor/extern/tomlplusplus"]
+	path = ryzen_pm_table_moonitor/extern/tomlplusplus
+	url = https://github.com/marzer/tomlplusplus
