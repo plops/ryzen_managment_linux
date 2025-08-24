@@ -16,7 +16,7 @@ void AnalysisManager::process_data_packet(const TimestampedData& current_data) {
 }
 
 // A small struct to hold the analysis result for a single core's stress pattern.
-// Define it here, local to the function that uses it.
+// Define it here, local to the function that uses it .
 struct CoreCorrelationResult {
     int core_id = -1;
     double abs_diff = 0.0;
