@@ -17,6 +17,7 @@
 #include "pm_table_reader.hpp"
 // --- Add analysis and stress includes ---
 #include "stress_tester.hpp"
+#include "analysis_manager.hpp"
 #include "analysis.hpp"
 #include <random>
 
@@ -133,18 +134,22 @@ int main() {
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 330");
 
-    PMTableReader pm_table_reader;
+    // --- New Architecture Setup ---
+    StressTester stress_tester;
+    AnalysisManager analysis_manager;
+    PMTableReader pm_table_reader(analysis_manager); // Pass manager to reader
 
-    // TaskFlow setup
+    // TaskFlow setup for the reader thread
     tf::Executor executor;
     tf::Taskflow taskflow;
-
     taskflow.emplace([&]() {
         spdlog::info("Starting PM table reading thread");
         pm_table_reader.start_reading();
     });
-
     executor.run(taskflow);
+
+    // Start the analysis thread
+    analysis_manager.start(&stress_tester);
 
     // Buffers for grouped plots
     // Frequencies
@@ -177,13 +182,6 @@ int main() {
     ScrollingBuffer thm_limit_buffer(2000), thm_value_buffer(2000);
     ScrollingBuffer fit_limit_buffer(2000), fit_value_buffer(2000);
 
-    // --- New additions for analysis ---
-    StressTester stress_tester;
-    std::vector<CellStats> analysis_data;
-    bool analyze_data_flag = false;
-    float time_since_last_sample = 0.0f;
-    const float sample_interval = 1.0f / 60.0f; // ~60Hz
-
     std::vector<ImVec4> core_colors;
     for(int i = 0; i < std::thread::hardware_concurrency(); ++i) {
         core_colors.push_back(generate_color_for_core(i));
@@ -206,58 +204,7 @@ int main() {
         ImPlot::ShowDemoWindow();
 #endif
 
-        // --- Data acquisition and analysis update ---
-        time_since_last_sample += ImGui::GetIO().DeltaTime;
-        auto raw_data_opt = pm_table_reader.get_latest_raw_data();
-
-        if (raw_data_opt && time_since_last_sample >= sample_interval) {
-            time_since_last_sample = 0;
-            const auto& raw_data = *raw_data_opt;
-
-            if (analysis_data.size() != raw_data.size()) {
-                analysis_data.assign(raw_data.size(), CellStats());
-            }
-            for (size_t i = 0; i < raw_data.size(); ++i) {
-                analysis_data[i].add_sample(raw_data[i]);
-            }
-
-            if (!analysis_data.empty() && analysis_data[0].history.size() == CellStats::HISTORY_SIZE && analyze_data_flag) {
-                spdlog::debug("Running correlation analysis...");
-                const auto& periods = stress_tester.get_periods();
-                double sample_rate = 1.0 / sample_interval;
-                double max_magnitude_overall = 0;
-                std::vector<double> magnitudes(analysis_data.size());
-
-                // First pass: find max magnitude for normalization
-                for (size_t i = 0; i < analysis_data.size(); ++i) {
-                    double max_mag_for_cell = 0;
-                    for (int core_id = 0; core_id < stress_tester.get_core_count(); ++core_id) {
-                        double freq = 1000.0 / periods[core_id].count();
-                        double mag = goertzel_magnitude(analysis_data[i].history, freq, sample_rate);
-                        if (mag > max_mag_for_cell) max_mag_for_cell = mag;
-                    }
-                    magnitudes[i] = max_mag_for_cell;
-                    if (max_mag_for_cell > max_magnitude_overall) max_magnitude_overall = max_mag_for_cell;
-                }
-
-                // Second pass: assign dominant core and normalized strength
-                for (size_t i = 0; i < analysis_data.size(); ++i) {
-                    analysis_data[i].correlation_strength = (max_magnitude_overall > 0) ? (magnitudes[i] / max_magnitude_overall) : 0.0;
-                    double max_mag_for_cell = 0;
-                    int dominant_core = -1;
-                    for (int core_id = 0; core_id < stress_tester.get_core_count(); ++core_id) {
-                        double freq = 1000.0 / periods[core_id].count();
-                        double mag = goertzel_magnitude(analysis_data[i].history, freq, sample_rate);
-                        if (mag > max_mag_for_cell) {
-                            max_mag_for_cell = mag;
-                            dominant_core = core_id;
-                        }
-                    }
-                    analysis_data[i].dominant_core_id = dominant_core;
-                }
-                analyze_data_flag = false;
-            }
-        }
+        // --- All analysis logic is GONE from the main loop ---
 
         auto data = pm_table_reader.get_latest_data();
         if (data) {
@@ -326,7 +273,6 @@ int main() {
 
         ImGui::Begin("PM Table Monitor", nullptr, flags);
 
-        // --- NEW: Add a Tab Bar ---
         if (ImGui::BeginTabBar("MainTabBar")) {
 
             // --- Tab 1: Decoded View ---
@@ -506,48 +452,48 @@ int main() {
             }
 
             // --- Tab 2: Raw Data Grid ---
-            if (ImGui::BeginTabItem("Raw Data Grid")) {
-                auto raw_data_opt = pm_table_reader.get_latest_raw_data();
-                if (raw_data_opt) {
-                    const auto& raw_data = *raw_data_opt;
-                    ImGui::Text("Raw PM Table Data (%zu floats)", raw_data.size());
-                    ImGui::Text("Hover over a cell to see its index.");
+            // if (ImGui::BeginTabItem("Raw Data Grid")) {
+            //     auto raw_data_opt = pm_table_reader.get_latest_data();
+            //     if (raw_data_opt) {
+            //         const auto& raw_data = *raw_data_opt;
+            //         ImGui::Text("Raw PM Table Data (%zu floats)", raw_data.size());
+            //         ImGui::Text("Hover over a cell to see its index.");
+            //
+            //         const int num_columns = 32;
+            //         if (ImGui::BeginTable("RawDataTable", num_columns, ImGuiTableFlags_Borders | ImGuiTableFlags_SizingFixedFit)) {
+            //             ImGui::TableSetupScrollFreeze(0, 1);
+            //             for (int col = 0; col < num_columns; ++col) {
+            //                 ImGui::TableSetupColumn(("+" + std::to_string(col)).c_str());
+            //             }
+            //             ImGui::TableHeadersRow();
+            //
+            //             for (int i = 0; i < static_cast<int>(raw_data.size()) && i < 1024; ++i) {
+            //                 if (i % num_columns == 0) {
+            //                     ImGui::TableNextRow();
+            //                 }
+            //                 ImGui::TableSetColumnIndex(i % num_columns);
+            //
+            //                 float value = raw_data[i];
+            //                 if (value != 0.0f) {
+            //                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 0.0f, 1.0f));
+            //                 }
+            //                 ImGui::Text("%.2f", value);
+            //                 if (value != 0.0f) {
+            //                     ImGui::PopStyleColor();
+            //                 }
+            //                 if (ImGui::IsItemHovered()) {
+            //                     ImGui::SetTooltip("Index: %d\nValue: %f", i, value);
+            //                 }
+            //             }
+            //             ImGui::EndTable();
+            //         }
+            //     } else {
+            //         ImGui::Text("Waiting for data...");
+            //     }
+            //     ImGui::EndTabItem();
+            // }
 
-                    const int num_columns = 32;
-                    if (ImGui::BeginTable("RawDataTable", num_columns, ImGuiTableFlags_Borders | ImGuiTableFlags_SizingFixedFit)) {
-                        ImGui::TableSetupScrollFreeze(0, 1);
-                        for (int col = 0; col < num_columns; ++col) {
-                            ImGui::TableSetupColumn(("+" + std::to_string(col)).c_str());
-                        }
-                        ImGui::TableHeadersRow();
-
-                        for (int i = 0; i < static_cast<int>(raw_data.size()) && i < 1024; ++i) {
-                            if (i % num_columns == 0) {
-                                ImGui::TableNextRow();
-                            }
-                            ImGui::TableSetColumnIndex(i % num_columns);
-
-                            float value = raw_data[i];
-                            if (value != 0.0f) {
-                                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 0.0f, 1.0f));
-                            }
-                            ImGui::Text("%.2f", value);
-                            if (value != 0.0f) {
-                                ImGui::PopStyleColor();
-                            }
-                            if (ImGui::IsItemHovered()) {
-                                ImGui::SetTooltip("Index: %d\nValue: %f", i, value);
-                            }
-                        }
-                        ImGui::EndTable();
-                    }
-                } else {
-                    ImGui::Text("Waiting for data...");
-                }
-                ImGui::EndTabItem();
-            }
-
-            // --- NEW Tab 3: Correlation Analysis ---
+            // --- Tab 3: Correlation Analysis (Now much simpler) ---
             if (ImGui::BeginTabItem("Correlation Analysis")) {
                 if (stress_tester.is_running()) {
                     if (ImGui::Button("Stop Stress Threads")) { stress_tester.stop(); }
@@ -557,15 +503,15 @@ int main() {
                 ImGui::SameLine();
                 if (ImGui::Button("Run Analysis")) {
                     if (stress_tester.is_running()) {
-                        analyze_data_flag = true;
-                        spdlog::info("Analysis triggered. Will run when history buffer is full.");
+                        analysis_manager.trigger_analysis();
+                        spdlog::info("Analysis triggered.");
                     } else {
                         spdlog::warn("Start stress threads before running analysis.");
                     }
                 }
                 ImGui::SameLine();
                 if (ImGui::Button("Reset Stats")) {
-                    for(auto& stats : analysis_data) { stats.reset(); }
+                    analysis_manager.reset_stats();
                 }
 
                 ImGui::Text("Core Color Legend:"); ImGui::SameLine();
@@ -576,16 +522,19 @@ int main() {
                 }
                 ImGui::NewLine();
 
-                const int num_columns = 16;
+                // --- Get pre-computed results and render ---
+                auto analysis_results = analysis_manager.get_analysis_results();
+
+                const int num_columns = 32;
                 if (ImGui::BeginTable("AnalysisGrid", num_columns, ImGuiTableFlags_Borders | ImGuiTableFlags_SizingFixedFit)) {
                     for (int col = 0; col < num_columns; ++col) ImGui::TableSetupColumn(("+" + std::to_string(col)).c_str());
                     ImGui::TableHeadersRow();
 
-                    for (int i = 0; i < analysis_data.size(); ++i) {
+                    for (int i = 0; i < analysis_results.size(); ++i) {
                         if (i % num_columns == 0) ImGui::TableNextRow();
                         ImGui::TableSetColumnIndex(i % num_columns);
 
-                        CellStats& stats = analysis_data[i];
+                        const CellStats& stats = analysis_results[i];
                         ImVec4 cell_color = ImVec4(0.1f, 0.1f, 0.1f, 1.0f);
                         if (stats.dominant_core_id != -1 && stats.correlation_strength > 0.1) {
                             ImVec4 base_color = core_colors[stats.dominant_core_id];
@@ -596,19 +545,19 @@ int main() {
                             ImGui::ColorConvertHSVtoRGB(h, s, v, cell_color.x, cell_color.y, cell_color.z);
                         }
                         ImGui::TableSetBgColor(ImGuiTableBgTarget_CellBg, ImGui::ColorConvertFloat4ToU32(cell_color));
-                        ImGui::Text("%.2f", stats.current_val);
+                        ImGui::Text("%7.2f", stats.current_val);
                         if (ImGui::IsItemHovered()) {
                             ImGui::BeginTooltip();
                             ImGui::Text("Index: %d", i);
                             ImGui::Separator();
-                            ImGui::Text("Live: %.3f", stats.current_val);
-                            ImGui::Text("Min:  %.3f", stats.min_val);
-                            ImGui::Text("Max:  %.3f", stats.max_val);
-                            ImGui::Text("Mean: %.3f", stats.mean);
-                            ImGui::Text("StdDev: %.3f", stats.get_stddev());
+                            ImGui::Text("Live: %6.3f", stats.current_val);
+                            ImGui::Text("Min:  %6.3f", stats.min_val);
+                            ImGui::Text("Max:  %6.3f", stats.max_val);
+                            ImGui::Text("Mean: %6.3f", stats.mean);
+                            ImGui::Text("StdDev: %3.3f", stats.get_stddev());
                             ImGui::Separator();
                             ImGui::Text("Dominant Core: %d", stats.dominant_core_id);
-                            ImGui::Text("Corr. Strength: %.2f", stats.correlation_strength);
+                            ImGui::Text("Corr. Strength: %3.2f", stats.correlation_strength);
                             ImGui::EndTooltip();
                         }
                     }
@@ -635,12 +584,12 @@ int main() {
         glfwSwapBuffers(window);
     }
 
-    spdlog::info("Exiting main loop, stopping PM table reading thread");
+    spdlog::info("Exiting main loop...");
+    analysis_manager.stop();
     pm_table_reader.stop_reading();
+    stress_tester.stop();
 
     // --- Cleanup ---
-    stress_tester.stop();
-    // Cleanup
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImPlot::DestroyContext();

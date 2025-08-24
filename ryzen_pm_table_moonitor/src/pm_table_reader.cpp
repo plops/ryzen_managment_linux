@@ -9,7 +9,8 @@
 #include <cerrno>    // For errno
 #include <cstring>   // For strerror
 
-PMTableReader::PMTableReader(const std::string &path) : pm_table_path_(path) {}
+PMTableReader::PMTableReader(AnalysisManager& manager, const std::string &path)
+    : analysis_manager_(manager), pm_table_path_(path) {}
 
 void PMTableReader::start_reading() {
     spdlog::info("PMTableReader: Starting reading thread");
@@ -71,16 +72,6 @@ std::optional<PMTableData> PMTableReader::get_latest_data() {
     return latest_data_;
 }
 
-// Implementation for the new raw data getter
-std::optional<std::vector<float>> PMTableReader::get_latest_raw_data() {
-    std::lock_guard<std::mutex> lock(data_mutex_);
-    if (latest_raw_data_.empty()) {
-        return std::nullopt;
-    }
-    return latest_raw_data_;
-}
-
-
 void PMTableReader::read_loop() {
     const std::chrono::microseconds target_period{1000};
 
@@ -138,11 +129,14 @@ void PMTableReader::read_loop() {
 
         bytes_read = pm_table_file.gcount();
         if (bytes_read > 0) {
+            // 1. Submit the raw data to the analysis thread
+            analysis_manager_.submit_raw_data(std::vector<float>(buffer.begin(), buffer.end()));
+
+            // 2. Parse and store the decoded data for the other tabs
             PMTableData new_data = parse_pm_table_0x400005(buffer);
             {
                 std::lock_guard<std::mutex> lock(data_mutex_);
-                latest_data_     = std::move(new_data);
-                latest_raw_data_ = buffer;
+                latest_data_ = std::move(new_data);
             }
         } else {
             pm_table_file.clear(); // Clear EOF or other error flags
