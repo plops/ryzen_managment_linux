@@ -725,6 +725,31 @@ int main() {
                             else if (stats.correlation_quality > 0.4f) quality_color = ImVec4(1.0f, 1.0f, 0.3f, 1.0f); // Yellow
                             ImGui::TextColored(quality_color, "Quality Indicator");
 
+                            // --- Realtime hover graph ---
+                            ImGui::Separator();
+                            ImGui::Text("History (%zu samples):", stats.history.size());
+                            if (stats.history.size() > 1) {
+                                std::vector<float> timestamps;
+                                std::vector<float> values;
+                                timestamps.reserve(stats.history.size());
+                                values.reserve(stats.history.size());
+                                long long first_ts = stats.history.front().timestamp_ns;
+                                for (const auto& sample : stats.history) {
+                                    timestamps.push_back((float)(sample.timestamp_ns - first_ts) / 1e9f);
+                                    values.push_back(sample.value);
+                                }
+
+                                if (ImPlot::BeginPlot("##History", ImVec2(400, 200), ImPlotFlags_NoTitle | ImPlotFlags_NoLegend | ImPlotFlags_NoMouseText)) {
+                                    ImPlot::SetupAxes(nullptr, nullptr, ImPlotAxisFlags_NoTickLabels, ImPlotAxisFlags_AutoFit);
+                                    float y_min = stats.min_val, y_max = stats.max_val;
+                                    float padding = (y_max - y_min) * 0.1f;
+                                    padding = (padding < 1e-5f) ? 1.0f : padding;
+                                    ImPlot::SetupAxisLimits(ImAxis_Y1, y_min - padding, y_max + padding, ImGuiCond_Always);
+                                    ImPlot::SetupAxisLimits(ImAxis_X1, timestamps.front(), timestamps.back(), ImGuiCond_Always);
+                                    ImPlot::PlotLine("Value", timestamps.data(), values.data(), (int)timestamps.size());
+                                    ImPlot::EndPlot();
+                                }
+                            }
                             ImGui::EndTooltip();
                         }
                         ImGui::PopID();
