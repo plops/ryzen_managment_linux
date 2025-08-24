@@ -1035,6 +1035,24 @@ int main() {
                 // --- Get pre-computed results and render ---
                 auto analysis_results = analysis_manager.get_analysis_results();
 
+                // --- NEW: Check if a single core is selected for focused coloring ---
+                int single_selected_core_id = -1; // -1: none, -2: multiple, >=0: single core ID
+                if (stress_tester.is_running()) {
+                    int selected_count = 0;
+                    for (int i = 0; i < stress_tester.get_core_count(); ++i) {
+                        if (stress_tester.get_thread_busy_state(i)) {
+                            selected_count++;
+                            single_selected_core_id = i; // Store the latest selected core
+                        }
+                    }
+                    if (selected_count > 1) {
+                        single_selected_core_id = -2; // Mark as multiple selected
+                    } else if (selected_count == 0) {
+                        single_selected_core_id = -1; // Mark as none selected
+                    }
+                }
+                // --- END OF NEW CODE ---
+
                 const int num_columns = 16;
                 if (ImGui::BeginTable("AnalysisGrid", num_columns, ImGuiTableFlags_Borders | ImGuiTableFlags_SizingFixedFit)) {
                     for (int col = 0; col < num_columns; ++col) {
@@ -1053,18 +1071,42 @@ int main() {
                         ImGui::TableSetColumnIndex(i % num_columns);
 
                         const CellStats& stats = analysis_results[i];
-                        ImVec4 cell_color = ImVec4(0.1f, 0.1f, 0.1f, 1.0f);
+                        ImVec4 cell_color = ImVec4(0.1f, 0.1f, 0.1f, 1.0f); // Default dark color
 
-                        // UPDATED: Color the cell based on the TOP correlated core
-                        if (!stats.top_correlations.empty() && stats.top_correlations[0].correlation_strength > 0.1f) {
-                            const auto& top_corr = stats.top_correlations[0];
-                            ImVec4 base_color = core_colors[top_corr.core_id];
-                            float h, s, v;
-                            ImGui::ColorConvertRGBtoHSV(base_color.x, base_color.y, base_color.z, h, s, v);
-                            // Optionally, scale saturation/value by strength
-                            s *= top_corr.correlation_strength;
-                            ImGui::ColorConvertHSVtoRGB(h, s, v, cell_color.x, cell_color.y, cell_color.z);
+                        // --- MODIFIED: Coloring Logic ---
+                        if (single_selected_core_id >= 0) {
+                            // CASE 1: A single core is selected. Color based on correlation to THAT core.
+                            float correlation_with_selected_core = 0.0f;
+                            // Find the specific correlation info for the selected core
+                            for (const auto& corr : stats.top_correlations) {
+                                if (corr.core_id == single_selected_core_id) {
+                                    correlation_with_selected_core = corr.correlation_strength;
+                                    break;
+                                }
+                            }
+
+                            if (correlation_with_selected_core > 0.01f) {
+                                ImVec4 base_color = core_colors[single_selected_core_id];
+                                float h, s, v;
+                                ImGui::ColorConvertRGBtoHSV(base_color.x, base_color.y, base_color.z, h, s, v);
+                                // Scale saturation by the specific correlation strength
+                                s *= correlation_with_selected_core;
+                                ImGui::ColorConvertHSVtoRGB(h, s, v, cell_color.x, cell_color.y, cell_color.z);
+                            }
+
+                        } else {
+                            // CASE 2: Zero or multiple cores selected. Color based on the TOP correlated core (original behavior).
+                            if (!stats.top_correlations.empty() && stats.top_correlations[0].correlation_strength > 0.1f) {
+                                const auto& top_corr = stats.top_correlations[0];
+                                ImVec4 base_color = core_colors[top_corr.core_id];
+                                float h, s, v;
+                                ImGui::ColorConvertRGBtoHSV(base_color.x, base_color.y, base_color.z, h, s, v);
+                                // Scale saturation/value by strength
+                                s *= top_corr.correlation_strength;
+                                ImGui::ColorConvertHSVtoRGB(h, s, v, cell_color.x, cell_color.y, cell_color.z);
+                            }
                         }
+                        // --- END OF MODIFIED LOGIC ---
 
                         ImGui::TableSetBgColor(ImGuiTableBgTarget_CellBg, ImGui::ColorConvertFloat4ToU32(cell_color));
                         bool is_interesting = stats.get_stddev() > 0.00001f;
@@ -1132,3 +1174,4 @@ int main() {
     spdlog::info("Shutdown complete");
     return 0;
 }
+
