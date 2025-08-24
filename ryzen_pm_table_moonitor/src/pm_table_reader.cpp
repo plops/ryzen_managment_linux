@@ -5,12 +5,40 @@
 #include <spdlog/spdlog.h>
 #include "jitter_monitor.hpp"
 
+#include <sched.h>   // For scheduling policy functions
+#include <cerrno>    // For errno
+#include <cstring>   // For strerror
+
 PMTableReader::PMTableReader(const std::string &path) : pm_table_path_(path) {}
 
 void PMTableReader::start_reading() {
     spdlog::info("PMTableReader: Starting reading thread");
     running_       = true;
     reader_thread_ = std::thread(&PMTableReader::read_loop, this);
+
+    // --- ENABLE REAL-TIME SCHEDULING ---
+
+    // SCHED_FIFO is a real-time policy that runs threads to completion or until
+    // they block or are preempted by a higher-priority thread.
+    const int policy = SCHED_FIFO;
+
+    // Set a high priority (1-99 for SCHED_FIFO).
+    // Be careful not to starve critical system threads. 80 is a reasonably high value.
+    sched_param params;
+    params.sched_priority = 80;
+
+    // pthread_setschedparam requires the native thread handle.
+    // The first argument is the thread ID, the second is the policy, and the third
+    // is a pointer to the scheduling parameters.
+    int ret = pthread_setschedparam(reader_thread_.native_handle(), policy, &params);
+    if (ret != 0) {
+        // Use strerror to get a human-readable error message.
+        // A common error is EPERM (Operation not permitted), which means you
+        // need to run the application with sufficient privileges (e.g., sudo).
+        spdlog::error("PMTableReader: Failed to set thread scheduling policy. Error: {}", strerror(ret));
+    } else {
+        spdlog::info("PMTableReader: Successfully set thread scheduling policy to SCHED_FIFO with priority {}", params.sched_priority);
+    }
 }
 
 void PMTableReader::stop_reading() {
@@ -64,7 +92,7 @@ void PMTableReader::read_loop() {
 
     // --- 2. Setup for Periodic Loop ---
 
-    JitterMonitor jitter_monitor(target_period.count(), 5000 /* samples before reporting */);
+    JitterMonitor jitter_monitor(target_period.count(), 5000 /* samples before reporting */, 2500);
 
     // Initialize timing *after* the first read is complete.
     auto next_wakeup = std::chrono::high_resolution_clock::now() + target_period;
@@ -82,6 +110,8 @@ void PMTableReader::read_loop() {
 
         // --- The Work ---
 
+        // Read the PM table data from the proc file system. The kernel will initiate and transfer the measurement
+        // from the SMU
         pm_table_file.read(reinterpret_cast<char*>(buffer.data()), bytes_to_read);
 
         bytes_read = pm_table_file.gcount();
