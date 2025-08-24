@@ -39,6 +39,19 @@ void PMTableReader::start_reading() {
     } else {
         spdlog::info("PMTableReader: Successfully set thread scheduling policy to SCHED_FIFO with priority {}", params.sched_priority);
     }
+
+    // --- OPTIONAL: SET CPU AFFINITY ---
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    // Pin the thread to a specific core, e.g., core 3
+    CPU_SET(3, &cpuset);
+
+    ret = pthread_setaffinity_np(reader_thread_.native_handle(), sizeof(cpu_set_t), &cpuset);
+    if (ret != 0) {
+        spdlog::error("PMTableReader: Failed to set thread CPU affinity. Error: {}", strerror(ret));
+    } else {
+        spdlog::info("PMTableReader: Successfully pinned reader thread to CPU 3");
+    }
 }
 
 void PMTableReader::stop_reading() {
