@@ -1,3 +1,4 @@
+message(STATUS "ImPlot will be built from submodule files in extern/implot")
 set(implot_SOURCE_DIR ${CMAKE_SOURCE_DIR}/extern/implot)
 add_library(implot STATIC
         ${implot_SOURCE_DIR}/implot.cpp

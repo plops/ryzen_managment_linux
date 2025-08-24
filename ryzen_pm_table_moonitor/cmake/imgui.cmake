@@ -1,3 +1,4 @@
+message(STATUS "ImGui will be built from submodule files in extern/imgui")
 set(imgui_SOURCE_DIR ${CMAKE_SOURCE_DIR}/extern/imgui)
 add_library(imgui STATIC
         ${imgui_SOURCE_DIR}/imgui.cpp

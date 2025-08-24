@@ -174,8 +174,11 @@ int main() {
         ImGui::NewFrame();
         static float t = 0;
 
+        // disable demo windows in release build
+#ifndef NDEBUG
         ImGui::ShowDemoWindow();
         ImPlot::ShowDemoWindow();
+#endif
 
         auto data = pm_table_reader.get_latest_data();
         if (data) {

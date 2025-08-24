@@ -143,6 +143,57 @@ There are **no official public specifications from AMD** on this. The maximum da
 
 3.  **Application-Determined Rate**: In reality, the rate is determined by the monitoring application. `ryzen_monitor` polls at 1 Hz by default. For human monitoring, a rate higher than 2-4 Hz is generally unnecessary and just consumes extra CPU cycles. The high-frequency data is primarily for the SMU's internal algorithms, not for external logging.
 
+### Is the Measurement in the Kernel Module Triggered by open() or read()?
+
+The measurement of the `pm_table` is initiated when the `/sys/kernel/ryzen_smu_drv/pm_table` file is **read**, not when it is opened.
+
+A closer look at the provided source code reveals the specific execution flow:
+
+1.  **Sysfs Attribute Creation (`drv.c`):** The driver creates a read-only sysfs attribute named `pm_table`. The function `pm_table_show` is registered as the handler for read operations on this file.
+
+    ```c
+    // in drv.c
+    __RO_ATTR (pm_table); 
+    
+    static ssize_t pm_table_show(struct kobject *kobj, struct kobj_attribute *attr, char *buff) {
+        if (smu_read_pm_table(g_driver.device, g_driver.pm_table, &g_driver.pm_table_read_size) != SMU_Return_OK)
+            return 0;
+    
+        memcpy(buff, g_driver.pm_table, g_driver.pm_table_read_size);
+        return g_driver.pm_table_read_size;
+    }
+    ```
+
+2.  **Read Operation Handler (`smu.c`):** When a user-space program (like `cat` or the provided `monitor_cpu.c`) reads from `/sys/kernel/ryzen_smu_drv/pm_table`, the kernel invokes `pm_table_show`. This function, in turn, calls `smu_read_pm_table`.
+
+3.  **Measurement Initiation (`smu.c`):** The `smu_read_pm_table` function contains the logic to trigger a new measurement. It checks if at least one millisecond has passed since the last measurement. If it has, it calls `smu_transfer_table_to_dram()`, which sends a command to the SMU to update the power metrics table in DRAM.
+
+    ```c
+    // in smu.c
+    enum smu_return_val smu_read_pm_table(struct pci_dev *dev, unsigned char *dst,
+                                          size_t *len) {
+      // ... (other code) ...
+    
+      // Check if we should tell the SMU to refresh the table via jiffies.
+      // Use a minimum interval of 1 ms.
+      if (!g_smu.pm_jiffies ||
+          time_after(jiffies, g_smu.pm_jiffies + msecs_to_jiffies(1))) {
+        g_smu.pm_jiffies = jiffies;
+    
+        ret = smu_transfer_table_to_dram(dev); // This initiates the measurement
+        if (ret != SMU_Return_OK)
+          return ret;
+    
+        // ... (code for 2nd table) ...
+      }
+    
+      // ... (code to copy data from DRAM to the user's buffer) ...
+    
+      return SMU_Return_OK;
+    }
+    ```
+
+In summary, the `open()` system call on the file does not trigger a hardware update. The actual command to the SMU to perform a measurement and update the data table is sent during the `read()` system call, but it is throttled to occur at most once per millisecond to avoid excessive polling.
 
 # References
 
