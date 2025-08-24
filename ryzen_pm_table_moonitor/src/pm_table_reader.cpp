@@ -3,6 +3,7 @@
 #include <fstream>
 #include <span>
 #include <spdlog/spdlog.h>
+#include "jitter_monitor.hpp"
 
 PMTableReader::PMTableReader(const std::string &path) : pm_table_path_(path) {}
 
@@ -29,97 +30,79 @@ std::optional<PMTableData> PMTableReader::get_latest_data() {
     return latest_data_;
 }
 
-void PMTableReader::read_loop() {
-    std::vector<float> buffer(1024); // The file seems to be 4096 bytes, i.e., 1024 floats
 
-    int                                                bytes_to_read    = buffer.size() * sizeof(float);
-    bool                                               first_read       = true;
+void PMTableReader::read_loop() {
     const std::chrono::microseconds target_period{1000};
-    int target_period_us = target_period.count();
-    auto next_wakeup = std::chrono::high_resolution_clock::now();
-    double                                             period_estimate  = target_period_us;
-    double                                             alpha            = .1;
-    std::chrono::time_point<std::chrono::system_clock> old_time         = std::chrono::system_clock::now();
-    int                                                count            = 0;
-    // std::vector<int> wait_histogram(300, 0);
-    // int max_wait = 0;
-    std::ifstream                                      pm_table_file(pm_table_path_, std::ios::binary);
+
+    // --- 1. Initialization and First Read ---
+
+    std::ifstream pm_table_file(pm_table_path_, std::ios::binary);
+    if (!pm_table_file.is_open()) {
+        spdlog::error("PMTableReader: Failed to open file: {}", pm_table_path_);
+        return;
+    }
+
+    // Start with a reasonably large buffer.
+    std::vector<float> buffer(1024);
+    int bytes_to_read = buffer.size() * sizeof(float);
+
+    // Perform the first read to determine the actual file size.
+    pm_table_file.read(reinterpret_cast<char*>(buffer.data()), bytes_to_read);
+    int bytes_read = pm_table_file.gcount();
+
+    if (bytes_read <= 0) {
+        spdlog::error("PMTableReader: Failed to read initial data from PM table. Exiting loop.");
+        return;
+    }
+
+    // Now, adjust the read size and buffer for all subsequent reads.
+    bytes_to_read = bytes_read;
+    auto floats_to_read = bytes_to_read / sizeof(float);
+    bytes_to_read = floats_to_read * sizeof(float); // Ensure it's a multiple of float size.
+    buffer.resize(floats_to_read); // Truncate buffer to the exact size.
+    spdlog::info("PMTableReader: Detected PM table size of {} bytes. Starting periodic reads.", bytes_to_read);
+
+    // --- 2. Setup for Periodic Loop ---
+
+    JitterMonitor jitter_monitor(target_period.count(), 5000 /* samples before reporting */);
+
+    // Initialize timing *after* the first read is complete.
+    auto next_wakeup = std::chrono::high_resolution_clock::now() + target_period;
+    auto old_time = std::chrono::high_resolution_clock::now();
+
+    // --- 3. Main Periodic Loop ---
 
     while (running_) {
-        // if (!first_read) {
-        //     // busy wait to fill period to 1ms
-        //     int wait_count = 0;
-        //     while (std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() -
-        //                                                                  old_time)
-        //                    .count() < target_period_us) {
-        //         wait_count++;
-        //     }
-        //     spdlog::trace("wait_count: {}", wait_count);
-        //     if (max_wait < wait_count)
-        //         max_wait = wait_count;
-        //     if (wait_count > wait_histogram.size()-1)
-        //         wait_count = wait_histogram.size()-1;
-        //
-        //     wait_histogram[wait_count]++;
-        // }
-        std::chrono::time_point<std::chrono::system_clock> start_time = std::chrono::high_resolution_clock::now();
+        // Sleep until the next scheduled wakeup time.
+        pm_table_file.clear(); // Clear EOF or other error flags
+        pm_table_file.seekg(0, std::ios::beg);
+        std::this_thread::sleep_until(next_wakeup);
 
-        pm_table_file.read(reinterpret_cast<char *>(buffer.data()), bytes_to_read);
-        int bytes_read = pm_table_file.gcount();
-        spdlog::trace("read {} bytes from PM table", bytes_read);
-        if (first_read && (bytes_to_read != bytes_read)) {
-            spdlog::warn("PMTableReader: Expected to read {} bytes, but read {}. Adjusting read size to this value.", bytes_to_read,
-                         bytes_read);
-            bytes_to_read = bytes_read; // Adjust to actual read size
-            first_read    = false;
-        } else {
-            spdlog::trace("PMTableReader: Successfully read {} bytes from PM table", bytes_read);
-        }
+        auto start_time = std::chrono::high_resolution_clock::now();
+
+        // --- The Work ---
+
+        pm_table_file.read(reinterpret_cast<char*>(buffer.data()), bytes_to_read);
+
+        bytes_read = pm_table_file.gcount();
         if (bytes_read > 0) {
             PMTableData new_data = parse_pm_table_0x400005(buffer);
             {
                 std::lock_guard<std::mutex> lock(data_mutex_);
                 latest_data_ = std::move(new_data);
             }
-            spdlog::debug("PMTableReader: Read new data from PM table");
         } else {
+            pm_table_file.clear(); // Clear EOF or other error flags
             spdlog::warn("PMTableReader: No data read from PM table");
         }
-        if (!first_read) {
-            auto period     = std::chrono::duration_cast<std::chrono::microseconds>(start_time - old_time);
-            old_time        = start_time;
-            period_estimate = period.count() * alpha + period_estimate * (1 - alpha);
-            count++;
-            if (count == 5000) {
-                count = 0;
-                spdlog::info("read period {:3.3f}ms", period_estimate / 1000.0);
-                // spdlog::info("read period {:3.3f}ms, max_wait={} iterations", period_estimate / 1000.0, max_wait);
 
-                // for (int i=0 ; i < wait_histogram.size(); i++) {
-                //     spdlog::info("bin: {:03d} {:06d}", i, wait_histogram[i]);
-                // }
-                // // zero all the values in histogram
-                // for (auto&&bin : wait_histogram) {
-                //     bin = 0;
-                // }
-                // max_wait = 0;
-            }
-        }
-        auto end_time   = std::chrono::high_resolution_clock::now();
-        auto duration   = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
-        auto sleep_time = std::chrono::microseconds((target_period_us * 10)/10) - duration;
+        // --- Jitter Measurement ---
+        auto period = std::chrono::duration_cast<std::chrono::microseconds>(start_time - old_time);
+        old_time = start_time;
+        jitter_monitor.record_sample(period.count());
 
-        // rewind to the beginning of the file before each read
-        pm_table_file.clear(); // Clear any EOF flags
-        pm_table_file.seekg(0, std::ios::beg);
-
-        // Calculate the next absolute time point for waking up
+        // --- Schedule Next Wakeup ---
         next_wakeup += target_period;
-        // Sleep until that exact time
-        std::this_thread::sleep_until(next_wakeup);
-        // if (sleep_time.count() > 0) {
-        //     std::this_thread::sleep_for(sleep_time);
-        // }
     }
     spdlog::info("PMTableReader: Exiting read loop");
 }
