@@ -3,11 +3,11 @@
 #include <fstream>
 #include <span>
 #include <spdlog/spdlog.h>
-#include "jitter_monitor.hpp"
+#include <chrono>
 
-#include <sched.h>   // For scheduling policy functions
-#include <cerrno>    // For errno
-#include <cstring>   // For strerror
+#include <sched.h>
+#include <cerrno>
+#include <cstring>
 
 PMTableReader::PMTableReader(AnalysisManager& manager, const std::string &path)
     : analysis_manager_(manager), pm_table_path_(path) {}
@@ -74,81 +74,54 @@ std::optional<PMTableData> PMTableReader::get_latest_data() {
 
 void PMTableReader::read_loop() {
     const std::chrono::microseconds target_period{1000};
-
-    // --- 1. Initialization and First Read ---
-
     std::ifstream pm_table_file(pm_table_path_, std::ios::binary);
     if (!pm_table_file.is_open()) {
         spdlog::error("PMTableReader: Failed to open file: {}", pm_table_path_);
         return;
     }
 
-    // Start with a reasonably large buffer.
     std::vector<float> buffer(1024);
-    int bytes_to_read = buffer.size() * sizeof(float);
-
-    // Perform the first read to determine the actual file size.
-    pm_table_file.read(reinterpret_cast<char*>(buffer.data()), bytes_to_read);
+    pm_table_file.read(reinterpret_cast<char*>(buffer.data()), buffer.size() * sizeof(float));
     int bytes_read = pm_table_file.gcount();
-
     if (bytes_read <= 0) {
         spdlog::error("PMTableReader: Failed to read initial data from PM table. Exiting loop.");
         return;
     }
 
-    // Now, adjust the read size and buffer for all subsequent reads.
-    bytes_to_read = bytes_read;
-    auto floats_to_read = bytes_to_read / sizeof(float);
-    bytes_to_read = floats_to_read * sizeof(float); // Ensure it's a multiple of float size.
-    buffer.resize(floats_to_read); // Truncate buffer to the exact size.
-    spdlog::info("PMTableReader: Detected PM table size of {} bytes. Starting periodic reads.", bytes_to_read);
+    auto floats_to_read = bytes_read / sizeof(float);
+    int bytes_to_read = floats_to_read * sizeof(float);
+    buffer.resize(floats_to_read);
+    spdlog::info("PMTableReader: Detected PM table size of {} bytes ({} floats).", bytes_to_read, floats_to_read);
 
-    // --- 2. Setup for Periodic Loop ---
+    // JitterMonitor jitter_monitor(target_period.count(), 5000 /* samples before reporting */, 2500);
 
-    JitterMonitor jitter_monitor(target_period.count(), 5000 /* samples before reporting */, 2500);
-
-    // Initialize timing *after* the first read is complete.
     auto next_wakeup = std::chrono::high_resolution_clock::now() + target_period;
-    auto old_time = std::chrono::high_resolution_clock::now();
-
-    // --- 3. Main Periodic Loop ---
 
     while (running_) {
-        // Sleep until the next scheduled wakeup time.
-        pm_table_file.clear(); // Clear EOF or other error flags
+        pm_table_file.clear();
         pm_table_file.seekg(0, std::ios::beg);
         std::this_thread::sleep_until(next_wakeup);
-
-        auto start_time = std::chrono::high_resolution_clock::now();
-
-        // --- The Work ---
-
-        // Read the PM table data from the proc file system. The kernel will initiate and transfer the measurement
-        // from the SMU
+        // Just after the wakeup take the time and perform the read on the procfs file
+        auto timestamp = std::chrono::steady_clock::now();
         pm_table_file.read(reinterpret_cast<char*>(buffer.data()), bytes_to_read);
-
         bytes_read = pm_table_file.gcount();
-        if (bytes_read > 0) {
-            // 1. Submit the raw data to the analysis thread
-            analysis_manager_.submit_raw_data(std::vector<float>(buffer.begin(), buffer.end()));
 
-            // 2. Parse and store the decoded data for the other tabs
+        if (bytes_read > 0) {
+            // 1. Submit timestamped raw data to the analysis thread
+            long long timestamp_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(timestamp.time_since_epoch()).count();
+            analysis_manager_.submit_data({timestamp_ns, std::vector<float>(buffer.begin(), buffer.end())});
+
+            // 2. Parse and store the decoded data for other GUI tabs
             PMTableData new_data = parse_pm_table_0x400005(buffer);
             {
                 std::lock_guard<std::mutex> lock(data_mutex_);
                 latest_data_ = std::move(new_data);
             }
         } else {
-            pm_table_file.clear(); // Clear EOF or other error flags
             spdlog::warn("PMTableReader: No data read from PM table");
         }
+        // jitter_monitor.record_sample(period.count());
 
-        // --- Jitter Measurement ---
-        auto period = std::chrono::duration_cast<std::chrono::microseconds>(start_time - old_time);
-        old_time = start_time;
-        jitter_monitor.record_sample(period.count());
-
-        // --- Schedule Next Wakeup ---
         next_wakeup += target_period;
     }
     spdlog::info("PMTableReader: Exiting read loop");

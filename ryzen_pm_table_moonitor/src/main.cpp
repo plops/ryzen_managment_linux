@@ -555,7 +555,7 @@ int main() {
                         }
                         if (ImGui::IsItemHovered()) {
                             ImGui::BeginTooltip();
-                            ImGui::Text("Index: %d", i);
+                            ImGui::Text("Index: %5d, Bytes: %5d .. %5d", i, i * 4, i * 4 + 3);
                             // Chess index (row/col) A..H, 1..64
                             ImGui::Text("Chess Index: %c%d", 'A' + (i % 8), (i / 8));
                             ImGui::Separator();
@@ -566,7 +566,7 @@ int main() {
                             ImGui::Text("StdDev: %8.3f", stats.get_stddev());
                             ImGui::Separator();
                             ImGui::Text("Dominant Core: %d", stats.dominant_core_id);
-                            ImGui::Text("Corr. Strength: %8.2f", stats.correlation_strength);
+                            ImGui::Text("On/Off Mean Diff: %12.4f", stats.correlation_strength);
                             ImGui::EndTooltip();
                         }
                     }

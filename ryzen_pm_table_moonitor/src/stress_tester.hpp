@@ -11,7 +11,7 @@
 #include <pthread.h>
 #endif
 
-// Helper to pin a thread to a specific CPU core i want the threads to apply computational stress with different periods (so that the stress can occur simultaneously but can be separated using fft or something like that)
+// Helper to pin a thread to a specific CPU core
 inline bool set_thread_affinity(std::thread& thread, int core_id) {
 #ifdef __linux__
     cpu_set_t cpuset;
@@ -29,13 +29,11 @@ inline bool set_thread_affinity(std::thread& thread, int core_id) {
 #endif
 }
 
-// A StressTester class to manage the per-core stress threads.
-//
+// Manages per-core stress threads.
 class StressTester {
 public:
     StressTester() {
-        num_cores_ = std::thread::hardware_concurrency()/2;
-        // Generate a list of prime numbers for unique periods to minimize harmonic overlap
+        num_cores_ = std::thread::hardware_concurrency() / 2;
         periods_ms_ = generate_prime_periods(num_cores_);
     }
 
@@ -48,6 +46,7 @@ public:
             return;
         }
         spdlog::info("Starting stress threads on {} cores...", num_cores_);
+        start_time_ = std::chrono::steady_clock::now(); // Record start time
         is_running_ = true;
         stop_flags_.resize(num_cores_);
         threads_.resize(num_cores_);
@@ -55,7 +54,7 @@ public:
         for (int i = 0; i < num_cores_; ++i) {
             stop_flags_[i] = std::make_unique<std::atomic<bool>>(false);
             threads_[i] = std::thread(&StressTester::stress_worker, this, i, periods_ms_[i], std::ref(*stop_flags_[i]));
-            set_thread_affinity(threads_[i], i*2);
+            set_thread_affinity(threads_[i], i * 2);
             spdlog::info("  - Core {} started with period {}ms", i, periods_ms_[i].count());
         }
     }
@@ -66,7 +65,7 @@ public:
         }
         spdlog::info("Stopping stress threads...");
         for (int i = 0; i < num_cores_; ++i) {
-            if(stop_flags_[i]) {
+            if (stop_flags_[i]) {
                 stop_flags_[i]->store(true);
             }
         }
@@ -84,30 +83,23 @@ public:
     bool is_running() const { return is_running_; }
     const std::vector<std::chrono::milliseconds>& get_periods() const { return periods_ms_; }
     unsigned int get_core_count() const { return num_cores_; }
-
+    std::chrono::steady_clock::time_point get_start_time() const { return start_time_; }
 
 private:
     void stress_worker(int core_id, std::chrono::milliseconds period, const std::atomic<bool>& stop_flag) {
-        // Work for ~30% of the period
         const auto work_duration = period / 3;
-
         while (!stop_flag) {
             auto loop_start = std::chrono::steady_clock::now();
             auto work_end = loop_start + work_duration;
             auto loop_end = loop_start + period;
 
-            // --- Computational Stress ---
             while (std::chrono::steady_clock::now() < work_end) {
-                // Volatile to prevent compiler from optimizing the loop away
                 volatile double val = 1.2345;
-                for(int i=0; i<500; ++i) {
+                for (int i = 0; i < 500; ++i) {
                     val *= 1.00001;
                     val /= 1.000009;
                 }
             }
-            // --- End Stress ---
-
-            // Sleep for the rest of the period
             if (std::chrono::steady_clock::now() < loop_end) {
                 std::this_thread::sleep_until(loop_end);
             }
@@ -116,7 +108,7 @@ private:
 
     std::vector<std::chrono::milliseconds> generate_prime_periods(unsigned int n) {
         std::vector<std::chrono::milliseconds> primes;
-        int num = 11; // Start from a prime number
+        int num = 11;
         while (primes.size() < n) {
             bool is_prime = true;
             for (int i = 2; i * i <= num; ++i) {
@@ -128,7 +120,7 @@ private:
             if (is_prime) {
                 primes.push_back(std::chrono::milliseconds(num));
             }
-            num += 2; // Check odd numbers
+            num += 2;
         }
         return primes;
     }
@@ -138,4 +130,5 @@ private:
     std::vector<std::thread> threads_;
     std::vector<std::unique_ptr<std::atomic<bool>>> stop_flags_;
     std::vector<std::chrono::milliseconds> periods_ms_;
+    std::chrono::steady_clock::time_point start_time_;
 };

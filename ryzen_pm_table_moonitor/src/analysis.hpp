@@ -4,8 +4,13 @@
 #include <cmath>
 #include <limits>
 #include <numeric>
+#include <deque>
 
-// A Goertzel algorithm implementation to efficiently detect the strength of our known frequencies in the data streams. The Goertzel algorithm is much more efficient than a full FFT when you only care about a few specific frequencies.
+// A sample with its value and the precise time it was captured.
+struct TimestampedSample {
+    long long timestamp_ns;
+    float value;
+};
 
 // Holds the analysis results for a single float from the PM table
 struct CellStats {
@@ -18,15 +23,11 @@ struct CellStats {
 
     // For correlation analysis
     static constexpr int HISTORY_SIZE = 256;
-    std::vector<float> history;
+    std::deque<TimestampedSample> history; // Use deque for efficient front removal
     int dominant_core_id = -1;
-    float correlation_strength = 0.0f; // Normalized strength [0, 1]
+    float correlation_strength = 0.0f; // Represents the absolute difference between on-state and off-state means
 
-    CellStats() {
-        history.reserve(HISTORY_SIZE);
-    }
-
-    void add_sample(float value) {
+    void add_sample(float value, long long timestamp_ns) {
         current_val = value;
         if (value < min_val) min_val = value;
         if (value > max_val) max_val = value;
@@ -38,12 +39,10 @@ struct CellStats {
         double delta2 = value - mean;
         m2 += delta * delta2;
 
-        // Add to history for frequency analysis
-        if (history.size() < HISTORY_SIZE) {
-            history.push_back(value);
-        } else {
-            // Ring buffer behavior
-            history[count % HISTORY_SIZE] = value;
+        // Add to history for correlation analysis
+        history.push_back({timestamp_ns, value});
+        if (history.size() > HISTORY_SIZE) {
+            history.pop_front();
         }
     }
 
@@ -63,30 +62,3 @@ struct CellStats {
         correlation_strength = 0.0f;
     }
 };
-
-
-// Goertzel algorithm to detect the magnitude of a specific frequency in a signal
-inline double goertzel_magnitude(const std::vector<float>& data, double target_frequency, double sample_rate) {
-    if (data.empty()) return 0.0;
-
-    int k = static_cast<int>(0.5 + (data.size() * target_frequency) / sample_rate);
-    double omega = (2.0 * M_PI * k) / data.size();
-    double cosine = cos(omega);
-    double sine = sin(omega);
-    double coeff = 2.0 * cosine;
-
-    double q0 = 0, q1 = 0, q2 = 0;
-
-    for (float sample : data) {
-        q0 = coeff * q1 - q2 + sample;
-        q2 = q1;
-        q1 = q0;
-    }
-
-    // Classic Goertzel result
-    double real = (q1 - q2 * cosine);
-    double imag = (q2 * sine);
-
-    // Returns magnitude squared
-    return real * real + imag * imag;
-}

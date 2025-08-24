@@ -1,6 +1,6 @@
 #pragma once
 
-#include "analysis.hpp" // We still need CellStats and goertzel_magnitude
+#include "analysis.hpp"
 #include "stress_tester.hpp"
 #include <vector>
 #include <thread>
@@ -8,6 +8,12 @@
 #include <condition_variable>
 #include <queue>
 #include <atomic>
+
+// Struct to hold a vector of raw data with its capture timestamp
+struct TimestampedData {
+    long long timestamp_ns;
+    std::vector<float> data;
+};
 
 class AnalysisManager {
 public:
@@ -33,7 +39,7 @@ public:
     }
 
     // Called by PMTableReader thread (Producer)
-    void submit_raw_data(std::vector<float>&& data) {
+    void submit_data(TimestampedData&& data) {
         {
             std::lock_guard<std::mutex> lock(queue_mutex_);
             data_queue_.push(std::move(data));
@@ -52,7 +58,6 @@ public:
     }
 
     void reset_stats() {
-        // Pass reset command to analysis thread
         reset_stats_flag_.store(true);
     }
 
@@ -61,8 +66,8 @@ private:
     void process_queue();
     void run_correlation_analysis();
 
-    // Producer/Consumer Queue for raw data
-    std::queue<std::vector<float>> data_queue_;
+    // Producer/Consumer Queue for timestamped data
+    std::queue<TimestampedData> data_queue_;
     std::mutex queue_mutex_;
     std::condition_variable queue_cv_;
 

@@ -5,7 +5,7 @@
 #include <string>
 #include <thread>
 #include <vector>
-#include "analysis_manager.hpp" // Add this
+#include "analysis_manager.hpp"
 
 struct PMTableData {
     // Only fields marked with //o in pm_tables.c, using 0x400005 as reference
@@ -65,7 +65,6 @@ PMTableData parse_pm_table_0x400005(const std::vector<float> &buffer);
 
 class PMTableReader {
 public:
-    // We now pass the analysis manager to the constructor
     explicit PMTableReader(AnalysisManager& manager, const std::string &path = "/sys/kernel/ryzen_smu_drv/pm_table");
     void                       start_reading();
     void                       stop_reading();
@@ -75,9 +74,9 @@ private:
     void read_loop();
 
     std::string pm_table_path_;
-    bool        running_ = false;
+    std::atomic<bool> running_{false};
     std::thread reader_thread_;
     std::mutex  data_mutex_;
     PMTableData latest_data_;
-    AnalysisManager& analysis_manager_; // Add this member
+    AnalysisManager& analysis_manager_;
 };
