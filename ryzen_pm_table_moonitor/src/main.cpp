@@ -660,7 +660,26 @@ int main() {
                        analysis_manager.reset_stats();
                    });
                 }
+                // --- Add checkboxes to control individual stress threads ---
+                if (stress_tester.is_running()) {
+                    ImGui::Separator();
+                    ImGui::TextUnformatted("Active Stress Threads:");
+                    for (int i = 0; i < stress_tester.get_core_count(); ++i) {
+                        ImGui::SameLine();
+                        bool is_busy = stress_tester.get_thread_busy_state(i);
+                        std::string label = "C" + std::to_string(i);
 
+                        ImGui::PushID(i);
+                        ImGui::PushStyleColor(ImGuiCol_Text, core_colors[i]);
+                        // When the checkbox is clicked, it modifies the local 'is_busy' variable
+                        if (ImGui::Checkbox(label.c_str(), &is_busy)) {
+                            // If a change occurred, notify the stress tester
+                            stress_tester.set_thread_busy_state(i, is_busy);
+                        }
+                        ImGui::PopStyleColor();
+                        ImGui::PopID();
+                    }
+                }
                 ImGui::Text("Core Color Legend:"); ImGui::SameLine();
                 for (int i=0; i < stress_tester.get_core_count(); ++i) {
                     ImGui::ColorButton(("##corecolor" + std::to_string(i)).c_str(), core_colors[i]);
