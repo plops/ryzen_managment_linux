@@ -26,11 +26,14 @@ public:
     // This will be called by a task submitted from the GUI.
     // CHANGED: The stress_tester is no longer const, as we need to change its state.
     void run_correlation_analysis(StressTester* stress_tester);
-
     // This will be called by a task submitted from the GUI.
     void reset_stats();
 
 private:
+
+    // A helper to update a cell's correlation list after a core is measured.
+    void update_or_insert_correlation(CellStats& stats, int core_id, float new_strength);
+
     // Analysis results remain, protected by a mutex for GUI access.
     std::vector<CellStats> analysis_results_;
     std::mutex results_mutex_;
