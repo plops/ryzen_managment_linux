@@ -536,7 +536,7 @@ int main() {
 
                         const CellStats& stats = analysis_results[i];
                         ImVec4 cell_color = ImVec4(0.1f, 0.1f, 0.1f, 1.0f);
-                        if (stats.dominant_core_id != -1 && stats.correlation_strength > 0.1) {
+                        if (stats.dominant_core_id != -1 && stats.correlation_strength > 0.01) {
                             ImVec4 base_color = core_colors[stats.dominant_core_id];
                             float h, s, v;
                             ImGui::ColorConvertRGBtoHSV(base_color.x, base_color.y, base_color.z, h, s, v);
@@ -556,6 +556,8 @@ int main() {
                         if (ImGui::IsItemHovered()) {
                             ImGui::BeginTooltip();
                             ImGui::Text("Index: %d", i);
+                            // Chess index (row/col) A..H, 1..64
+                            ImGui::Text("Chess Index: %c%d", 'A' + (i % 8), (i / 8));
                             ImGui::Separator();
                             ImGui::Text("Live: %8.3f", stats.current_val);
                             ImGui::Text("Min:  %8.3f", stats.min_val);

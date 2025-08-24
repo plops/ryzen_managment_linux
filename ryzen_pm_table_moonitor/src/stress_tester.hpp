@@ -34,7 +34,7 @@ inline bool set_thread_affinity(std::thread& thread, int core_id) {
 class StressTester {
 public:
     StressTester() {
-        num_cores_ = std::thread::hardware_concurrency();
+        num_cores_ = std::thread::hardware_concurrency()/2;
         // Generate a list of prime numbers for unique periods to minimize harmonic overlap
         periods_ms_ = generate_prime_periods(num_cores_);
     }
@@ -55,7 +55,7 @@ public:
         for (int i = 0; i < num_cores_; ++i) {
             stop_flags_[i] = std::make_unique<std::atomic<bool>>(false);
             threads_[i] = std::thread(&StressTester::stress_worker, this, i, periods_ms_[i], std::ref(*stop_flags_[i]));
-            set_thread_affinity(threads_[i], i);
+            set_thread_affinity(threads_[i], i*2);
             spdlog::info("  - Core {} started with period {}ms", i, periods_ms_[i].count());
         }
     }
@@ -116,7 +116,7 @@ private:
 
     std::vector<std::chrono::milliseconds> generate_prime_periods(unsigned int n) {
         std::vector<std::chrono::milliseconds> primes;
-        int num = 101; // Start from a prime number
+        int num = 11; // Start from a prime number
         while (primes.size() < n) {
             bool is_prime = true;
             for (int i = 2; i * i <= num; ++i) {
