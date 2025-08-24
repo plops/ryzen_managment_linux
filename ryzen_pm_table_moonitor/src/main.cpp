@@ -8,7 +8,6 @@
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
 #include "implot.h"
-// #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 #include <boost/pfr.hpp>
 #include <string>
@@ -16,17 +15,17 @@
 #include <taskflow/algorithm/pipeline.hpp>
 #include <type_traits>
 #include "pm_table_reader.hpp"
-// --- Add analysis and stress includes ---
 #include "stress_tester.hpp"
 #include "analysis_manager.hpp"
 #include "analysis.hpp"
-#include <random>
-
-#include <taskflow/taskflow.hpp>
-#include "pm_table_reader.hpp"
-#include "stress_tester.hpp"
-#include "analysis_manager.hpp"
+#include "jitter_monitor.hpp"
 #include <atomic> // For the stop flag
+
+// Required headers for thread scheduling and affinity
+#include <sched.h>
+#include <pthread.h>
+#include <cstring> // For strerror
+
 
 // Helper function to create a scrolling buffer for plots
 struct ScrollingBuffer {
@@ -133,6 +132,63 @@ void RenderTextWithOutline(const char* text, const ImVec4& text_color)
     ImGui::InvisibleButton(text, text_size);
 }
 
+
+
+// ----------------------------------------------------------------------------
+// Custom Worker Behavior to set high priority for a specific worker
+// ----------------------------------------------------------------------------
+class HighPriorityWorkerBehavior : public tf::WorkerInterface {
+public:
+    // This method is called by the executor before a worker thread enters the scheduling loop.
+    void scheduler_prologue(tf::Worker& worker) override {
+
+        // We will designate worker 0 as our high-priority, real-time worker.
+        if (worker.id() == 0) {
+            spdlog::info("Configuring high-priority scheduling for worker {}", worker.id());
+
+            // --- ENABLE REAL-TIME SCHEDULING (from your old code) ---
+            #if defined(__linux__)
+            const int policy = SCHED_FIFO;
+            sched_param params;
+            // Set a high priority (1-99 for SCHED_FIFO).
+            params.sched_priority = 80;
+
+            int ret = pthread_setschedparam(worker.thread().native_handle(), policy, &params);
+            if (ret != 0) {
+                spdlog::error("Failed to set thread scheduling policy for worker {}. Error: {}", worker.id(), strerror(ret));
+                spdlog::warn("You may need to run with sudo or grant CAP_SYS_NICE capabilities.");
+            } else {
+                spdlog::info("Successfully set worker {} scheduling policy to SCHED_FIFO with priority {}", worker.id(), params.sched_priority);
+            }
+
+            // --- SET CPU AFFINITY (from your old code) ---
+            cpu_set_t cpuset;
+            CPU_ZERO(&cpuset);
+            // Pin the thread to a specific core, e.g., core 3
+            const int core_id = 3;
+            CPU_SET(core_id, &cpuset);
+
+            ret = pthread_setaffinity_np(worker.thread().native_handle(), sizeof(cpu_set_t), &cpuset);
+            if (ret != 0) {
+                spdlog::error("Failed to set CPU affinity for worker {}. Error: {}", worker.id(), strerror(ret));
+            } else {
+                spdlog::info("Successfully pinned worker {} to CPU {}", worker.id(), core_id);
+            }
+            #else
+            spdlog::warn("Real-time scheduling is only implemented for Linux in this example.");
+            #endif
+
+        } else {
+            spdlog::info("Worker {} starting with default scheduling.", worker.id());
+        }
+    }
+
+    // This method is called after a worker leaves the scheduling loop.
+    void scheduler_epilogue(tf::Worker& worker, std::exception_ptr) override {
+        spdlog::info("Worker {} left the work-stealing loop.", worker.id());
+    }
+};
+
 int main() {
     spdlog::info("Starting PM Table Monitor");
 
@@ -172,7 +228,8 @@ int main() {
     ImGui_ImplOpenGL3_Init("#version 330");
 
     // 1. === Centralized Concurrency Setup ===
-    tf::Executor executor;
+    const size_t num_workers = 4;
+    tf::Executor executor(num_workers, tf::make_worker_interface<HighPriorityWorkerBehavior>());
     std::atomic<bool> stop_pipeline{false};
 
     // 2. === Instantiate Simplified Components ===
@@ -197,10 +254,13 @@ int main() {
                 return;
             }
 
-            // --- Logic moved from PMTableReader::read_loop ---
             static std::ifstream pm_table_file(pm_table_reader.pm_table_path_, std::ios::binary);
             static auto read_buffer = std::vector<float>(1024);
             static int bytes_to_read = -1;
+            const std::chrono::microseconds target_period{1000};
+
+            static JitterMonitor jitter_monitor(target_period.count(), 5000 /* samples before reporting */, 2500);
+            static std::chrono::time_point<std::chrono::steady_clock> last_read_time = std::chrono::steady_clock::now();
 
             if (!pm_table_file.is_open()) {
                 if(!stop_pipeline) spdlog::error("PMTableReader: Failed to open file: {}", pm_table_reader.pm_table_path_);
@@ -223,28 +283,31 @@ int main() {
                 }
             }
 
-            const std::chrono::microseconds target_period{1000};
             static auto next_wakeup = std::chrono::high_resolution_clock::now() + target_period;
-
-            std::this_thread::sleep_until(next_wakeup);
-            auto timestamp = std::chrono::steady_clock::now();
 
             pm_table_file.clear();
             pm_table_file.seekg(0, std::ios::beg);
+            std::this_thread::sleep_until(next_wakeup);
+
+            auto timestamp = std::chrono::steady_clock::now();
+
             pm_table_file.read(reinterpret_cast<char*>(read_buffer.data()), bytes_to_read);
 
             if (pm_table_file.gcount() > 0) {
                 long long timestamp_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(timestamp.time_since_epoch()).count();
 
-                // CORRECTED LOGIC: Place the result in the shared buffer at the current pipeline's line index.
+                // Place the result in the shared buffer at the current pipeline's line index.
                 data_buffer[pf.line()] = {timestamp_ns, read_buffer};
             }
+            long long period_us = std::chrono::duration_cast<std::chrono::microseconds>(timestamp - last_read_time).count();
+            jitter_monitor.record_sample(period_us);
+            last_read_time = timestamp;
             next_wakeup += target_period;
         }},
 
         // Stage 2: Consumer (READS from the shared buffer and processes data)
         tf::Pipe{tf::PipeType::PARALLEL, [&](tf::Pipeflow& pf) {
-            // CORRECTED LOGIC: Get a reference to the data produced by stage 1 on the same line.
+            // Get a reference to the data produced by stage 1 on the same line.
             const TimestampedData& data = data_buffer[pf.line()];
 
             // 2a. Update the high-frequency analysis data
@@ -569,48 +632,6 @@ int main() {
 
                 ImGui::EndTabItem();
             }
-
-            // --- Tab 2: Raw Data Grid ---
-            // if (ImGui::BeginTabItem("Raw Data Grid")) {
-            //     auto raw_data_opt = pm_table_reader.get_latest_data();
-            //     if (raw_data_opt) {
-            //         const auto& raw_data = *raw_data_opt;
-            //         ImGui::Text("Raw PM Table Data (%zu floats)", raw_data.size());
-            //         ImGui::Text("Hover over a cell to see its index.");
-            //
-            //         const int num_columns = 32;
-            //         if (ImGui::BeginTable("RawDataTable", num_columns, ImGuiTableFlags_Borders | ImGuiTableFlags_SizingFixedFit)) {
-            //             ImGui::TableSetupScrollFreeze(0, 1);
-            //             for (int col = 0; col < num_columns; ++col) {
-            //                 ImGui::TableSetupColumn(("+" + std::to_string(col)).c_str());
-            //             }
-            //             ImGui::TableHeadersRow();
-            //
-            //             for (int i = 0; i < static_cast<int>(raw_data.size()) && i < 1024; ++i) {
-            //                 if (i % num_columns == 0) {
-            //                     ImGui::TableNextRow();
-            //                 }
-            //                 ImGui::TableSetColumnIndex(i % num_columns);
-            //
-            //                 float value = raw_data[i];
-            //                 if (value != 0.0f) {
-            //                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 0.0f, 1.0f));
-            //                 }
-            //                 ImGui::Text("%.2f", value);
-            //                 if (value != 0.0f) {
-            //                     ImGui::PopStyleColor();
-            //                 }
-            //                 if (ImGui::IsItemHovered()) {
-            //                     ImGui::SetTooltip("Index: %d\nValue: %f", i, value);
-            //                 }
-            //             }
-            //             ImGui::EndTable();
-            //         }
-            //     } else {
-            //         ImGui::Text("Waiting for data...");
-            //     }
-            //     ImGui::EndTabItem();
-            // }
 
             // --- Tab 3: Correlation Analysis (Now much simpler) ---
             if (ImGui::BeginTabItem("Correlation Analysis")) {
