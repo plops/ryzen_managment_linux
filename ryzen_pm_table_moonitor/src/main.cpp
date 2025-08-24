@@ -20,6 +20,7 @@
 #include "analysis.hpp"
 #include "jitter_monitor.hpp"
 #include <atomic> // For the stop flag
+#include <algorithm> // For std::find
 
 // Required headers for thread scheduling and affinity
 #include <sched.h>
@@ -132,7 +133,94 @@ void RenderTextWithOutline(const char* text, const ImVec4& text_color)
     ImGui::InvisibleButton(text, text_size);
 }
 
+// Helper function to render the detailed content for a given cell.
+// This will be used by both the hover tooltip and the new pinned windows.
+void RenderCellDetails(int index, const CellStats& stats, const StressTester& stress_tester, const std::vector<ImVec4>& core_colors) {
+    ImGui::Text("Index: %5d, Bytes: %5d .. %5d", index, index * 4, index * 4 + 3);
+    // Chess index (row/col) A..H, 1..64
+    ImGui::Text("Chess Index: %c%d", 'A' + (index % 8), (index / 8));
+    ImGui::Separator();
+    ImGui::Text("Live: %8.3f", stats.current_val);
+    ImGui::Text("Min:  %8.3f", stats.min_val);
+    ImGui::Text("Max:  %8.3f", stats.max_val);
+    ImGui::Text("Mean: %8.3f", stats.mean);
+    ImGui::Text("StdDev: %8.3f", stats.get_stddev());
+    ImGui::Separator();
+    ImGui::Text("Dominant Core: %d", stats.dominant_core_id);
+    ImGui::Text("Corr. Strength:   %.3f", stats.correlation_strength);
 
+    //  Display the quality score and color indicator
+    ImGui::Text("Corr. Quality:    %.3f", stats.correlation_quality);
+    ImVec4 quality_color = ImVec4(1.0f, 0.3f, 0.3f, 1.0f); // Red
+    if (stats.correlation_quality > 0.75f) quality_color = ImVec4(0.3f, 1.0f, 0.3f, 1.0f); // Green
+    else if (stats.correlation_quality > 0.4f) quality_color = ImVec4(1.0f, 1.0f, 0.3f, 1.0f); // Yellow
+    ImGui::TextColored(quality_color, "Quality Indicator");
+
+    // --- Realtime hover graph ---
+    ImGui::Separator();
+    ImGui::Text("History (%zu samples):", stats.history.size());
+    if (stats.history.size() > 1) {
+        std::vector<float> timestamps;
+        std::vector<float> values;
+        timestamps.reserve(stats.history.size());
+        values.reserve(stats.history.size());
+        long long first_ts = stats.history.front().timestamp_ns;
+        for (const auto& sample : stats.history) {
+            timestamps.push_back((float)(sample.timestamp_ns - first_ts) / 1e9f);
+            values.push_back(sample.value);
+        }
+
+        bool has_dominant_core = stats.dominant_core_id != -1 && stress_tester.is_running();
+
+        if (ImPlot::BeginPlot("##History", ImVec2(400, 200), ImPlotFlags_NoTitle | ImPlotFlags_NoLegend | ImPlotFlags_NoMouseText | (has_dominant_core ? ImPlotFlags_YAxis2 : 0) )) {
+            // --- Phase 1: Setup all axes before plotting ---
+            ImPlot::SetupAxis(ImAxis_X1, nullptr, ImPlotAxisFlags_NoTickLabels);
+            ImPlot::SetupAxisLimits(ImAxis_X1, timestamps.front(), timestamps.back(), ImGuiCond_Always);
+
+            ImPlot::SetupAxis(ImAxis_Y1, "Value", ImPlotAxisFlags_AutoFit);
+            float y_min = stats.min_val, y_max = stats.max_val;
+            float padding = (y_max - y_min) * 0.1f;
+            padding = (padding < 1e-5f) ? 1.0f : padding;
+            ImPlot::SetupAxisLimits(ImAxis_Y1, y_min - padding, y_max + padding, ImGuiCond_Always);
+
+            if (has_dominant_core) {
+                ImPlot::SetupAxis(ImAxis_Y2, "Core State", ImPlotAxisFlags_Opposite);
+                ImPlot::SetupAxisLimits(ImAxis_Y2, -0.1, 1.1, ImGuiCond_Always);
+            }
+
+            // --- Phase 2: Plot all data ---
+            ImPlot::SetAxis(ImAxis_Y1);
+            ImPlot::PlotLine("Value", timestamps.data(), values.data(), (int)timestamps.size());
+
+            if (has_dominant_core) {
+                std::vector<float> core_state_values;
+                core_state_values.reserve(stats.history.size());
+
+                const auto& periods = stress_tester.get_periods();
+                const auto stress_start_time = stress_tester.get_start_time();
+                const long long stress_start_time_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(stress_start_time.time_since_epoch()).count();
+                const long long period_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(periods[stats.dominant_core_id]).count();
+                const long long work_duration_ns = period_ns / 3;
+
+                for (const auto& sample : stats.history) {
+                    long long time_since_start = sample.timestamp_ns - stress_start_time_ns;
+                    float core_state = 0.0f;
+                    if (time_since_start >= 0) {
+                        long long phase_in_period = time_since_start % period_ns;
+                        if (phase_in_period < work_duration_ns) {
+                            core_state = 1.0f;
+                        }
+                    }
+                    core_state_values.push_back(core_state);
+                }
+
+                ImPlot::SetAxis(ImAxis_Y2);
+                ImPlot::PlotLine("Core State", timestamps.data(), core_state_values.data(), (int)timestamps.size());
+            }
+            ImPlot::EndPlot();
+        }
+    }
+}
 
 // ----------------------------------------------------------------------------
 // Custom Worker Behavior to set high priority for a specific worker
@@ -365,6 +453,8 @@ int main() {
     for(int i = 0; i < std::thread::hardware_concurrency(); ++i) {
         core_colors.push_back(generate_color_for_core(i));
     }
+    // State for our new pinned windows. A vector of the cell indices we want to show.
+    static std::vector<int> pinned_cell_indices;
 
     spdlog::info("Entering main loop");
     while (!glfwWindowShouldClose(window)) {
@@ -384,6 +474,37 @@ int main() {
 #endif
 
         // --- All analysis logic is GONE from the main loop ---
+        // Get the latest results once to share between the grid and pinned windows
+        auto analysis_results = analysis_manager.get_analysis_results();
+        // Use an iterator-based loop so we can safely remove elements while iterating
+        for (auto it = pinned_cell_indices.begin(); it != pinned_cell_indices.end(); ) {
+            int pinned_index = *it;
+            bool window_is_open = true; // Flag for the ImGui::Begin function
+
+            // Ensure we don't try to access an out-of-bounds index
+            if (pinned_index < analysis_results.size()) {
+                // Create a unique title for each window
+                std::string window_title = fmt::format("Pinned Cell Details (Index {})###PinnedWindow{}", pinned_index, pinned_index);
+
+                // Render the window. Pass a pointer to our bool.
+                // ImGui will set it to false if the user clicks the 'x' button.
+                ImGui::Begin(window_title.c_str(), &window_is_open);
+
+                // Call our refactored helper function to draw the content
+                RenderCellDetails(pinned_index, analysis_results[pinned_index], stress_tester, core_colors);
+
+                ImGui::End();
+            }
+
+            // If the window was closed, remove its index from our vector and update the iterator
+            if (!window_is_open) {
+                it = pinned_cell_indices.erase(it);
+            } else {
+                // Otherwise, just move to the next item
+                ++it;
+            }
+        }
+
 
         auto data = pm_table_reader.get_latest_data();
         if (data) {
@@ -445,7 +566,7 @@ int main() {
             fit_value_buffer.AddPoint(t, data->fit_value);
         }
 
-        static ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings;
+        static ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus;
         const ImGuiViewport* viewport = ImGui::GetMainViewport();
         ImGui::SetNextWindowPos(viewport->Pos);
         ImGui::SetNextWindowSize( viewport->Size);
@@ -660,6 +781,12 @@ int main() {
                        analysis_manager.reset_stats();
                    });
                 }
+
+                // Add a small instruction text for the user
+                ImGui::Separator();
+                ImGui::Text("Right-click a cell to pin its details window.");
+                ImGui::Separator();
+
                 // --- Add checkboxes to control individual stress threads ---
                 if (stress_tester.is_running()) {
                     ImGui::Separator();
@@ -721,95 +848,16 @@ int main() {
                         } else {
                             ImGui::Text("%8.2f", stats.current_val);
                         }
-
+                        //  Add the pinning logic on right-click
+                        if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+                            // To prevent adding the same window multiple times, check if it already exists
+                            if (std::find(pinned_cell_indices.begin(), pinned_cell_indices.end(), i) == pinned_cell_indices.end()) {
+                                pinned_cell_indices.push_back(i);
+                            }
+                        }
                         if (ImGui::IsItemHovered()) {
                             ImGui::BeginTooltip();
-                            ImGui::Text("Index: %5d, Bytes: %5d .. %5d", i, i * 4, i * 4 + 3);
-                            // Chess index (row/col) A..H, 1..64
-                            ImGui::Text("Chess Index: %c%d", 'A' + (i % 8), (i / 8));
-                            ImGui::Separator();
-                            ImGui::Text("Live: %8.3f", stats.current_val);
-                            ImGui::Text("Min:  %8.3f", stats.min_val);
-                            ImGui::Text("Max:  %8.3f", stats.max_val);
-                            ImGui::Text("Mean: %8.3f", stats.mean);
-                            ImGui::Text("StdDev: %8.3f", stats.get_stddev());
-                            ImGui::Separator();
-                            ImGui::Text("Dominant Core: %d", stats.dominant_core_id);
-                            ImGui::Text("Corr. Strength:   %.3f", stats.correlation_strength);
-
-                            //  Display the quality score and color indicator
-                            ImGui::Text("Corr. Quality:    %.3f", stats.correlation_quality);
-                            ImVec4 quality_color = ImVec4(1.0f, 0.3f, 0.3f, 1.0f); // Red
-                            if (stats.correlation_quality > 0.75f) quality_color = ImVec4(0.3f, 1.0f, 0.3f, 1.0f); // Green
-                            else if (stats.correlation_quality > 0.4f) quality_color = ImVec4(1.0f, 1.0f, 0.3f, 1.0f); // Yellow
-                            ImGui::TextColored(quality_color, "Quality Indicator");
-
-                             // --- Realtime hover graph ---
-                            ImGui::Separator();
-                            ImGui::Text("History (%zu samples):", stats.history.size());
-                            if (stats.history.size() > 1) {
-                                std::vector<float> timestamps;
-                                std::vector<float> values;
-                                timestamps.reserve(stats.history.size());
-                                values.reserve(stats.history.size());
-                                long long first_ts = stats.history.front().timestamp_ns;
-                                for (const auto& sample : stats.history) {
-                                    timestamps.push_back((float)(sample.timestamp_ns - first_ts) / 1e9f);
-                                    values.push_back(sample.value);
-                                }
-
-                                bool has_dominant_core = stats.dominant_core_id != -1 && stress_tester.is_running();
-
-                                if (ImPlot::BeginPlot("##History", ImVec2(400, 200), ImPlotFlags_NoTitle | ImPlotFlags_NoLegend | ImPlotFlags_NoMouseText | (has_dominant_core ? ImPlotFlags_YAxis2 : 0) )) {
-
-                                    // --- Phase 1: Setup all axes before plotting ---
-                                    ImPlot::SetupAxis(ImAxis_X1, nullptr, ImPlotAxisFlags_NoTickLabels);
-                                    ImPlot::SetupAxisLimits(ImAxis_X1, timestamps.front(), timestamps.back(), ImGuiCond_Always);
-
-                                    ImPlot::SetupAxis(ImAxis_Y1, "Value", ImPlotAxisFlags_AutoFit);
-                                    float y_min = stats.min_val, y_max = stats.max_val;
-                                    float padding = (y_max - y_min) * 0.1f;
-                                    padding = (padding < 1e-5f) ? 1.0f : padding;
-                                    ImPlot::SetupAxisLimits(ImAxis_Y1, y_min - padding, y_max + padding, ImGuiCond_Always);
-
-                                    if (has_dominant_core) {
-                                        ImPlot::SetupAxis(ImAxis_Y2, "Core State", ImPlotAxisFlags_Opposite);
-                                        ImPlot::SetupAxisLimits(ImAxis_Y2, -0.1, 1.1, ImGuiCond_Always);
-                                    }
-
-                                    // --- Phase 2: Plot all data ---
-                                    ImPlot::SetAxis(ImAxis_Y1);
-                                    ImPlot::PlotLine("Value", timestamps.data(), values.data(), (int)timestamps.size());
-
-                                    if (has_dominant_core) {
-                                        std::vector<float> core_state_values;
-                                        core_state_values.reserve(stats.history.size());
-
-                                        const auto& periods = stress_tester.get_periods();
-                                        const auto stress_start_time = stress_tester.get_start_time();
-                                        const long long stress_start_time_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(stress_start_time.time_since_epoch()).count();
-                                        const long long period_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(periods[stats.dominant_core_id]).count();
-                                        const long long work_duration_ns = period_ns / 3;
-
-                                        for (const auto& sample : stats.history) {
-                                            long long time_since_start = sample.timestamp_ns - stress_start_time_ns;
-                                            float core_state = 0.0f;
-                                            if (time_since_start >= 0) {
-                                                long long phase_in_period = time_since_start % period_ns;
-                                                if (phase_in_period < work_duration_ns) {
-                                                    core_state = 1.0f;
-                                                }
-                                            }
-                                            core_state_values.push_back(core_state);
-                                        }
-
-                                        ImPlot::SetAxis(ImAxis_Y2);
-                                        ImPlot::PlotLine("Core State", timestamps.data(), core_state_values.data(), (int)timestamps.size());
-                                    }
-
-                                    ImPlot::EndPlot();
-                                }
-                            }
+                            RenderCellDetails(i, stats, stress_tester, core_colors);
                             ImGui::EndTooltip();
                         }
                         ImGui::PopID();
