@@ -10,3 +10,6 @@
 [submodule "ryzen_pm_table_moonitor/extern/implot"]
 	path = ryzen_pm_table_moonitor/extern/implot
 	url = https://github.com/epezent/implot.git
+[submodule "ryzen_pm_table_moonitor/extern/spdlog"]
+	path = ryzen_pm_table_moonitor/extern/spdlog
+	url = https://github.com/gabime/spdlog

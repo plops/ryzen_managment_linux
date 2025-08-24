@@ -1,12 +1,17 @@
-# Try to find spdlog, otherwise fetch it
-find_package(spdlog QUIET)
-if(NOT spdlog_FOUND)
-    message(STATUS "spdlog not found, using FetchContent to download it")
-    include(FetchContent)
-    FetchContent_Declare(
-            spdlog
-            GIT_REPOSITORY https://github.com/gabime/spdlog.git
-            GIT_TAG v1.13.0
-    )
-    FetchContent_MakeAvailable(spdlog)
-endif()
+set(SPDLOG_SUBMODULE_DIR ${CMAKE_SOURCE_DIR}/extern/spdlog)
+find_package(spdlog)
+if (NOT spdlog_FOUND)
+    message(STATUS "taskflow not found in dependencies folder")
+    if (EXISTS ${SPDLOG_SUBMODULE_DIR}/CMakeLists.txt)
+        add_subdirectory(${SPDLOG_SUBMODULE_DIR} extern/spdlog)
+        message(STATUS "spdlog will be built from submodule")
+    else ()
+        include(FetchContent)
+        FetchContent_Declare(
+                spdlog
+                GIT_REPOSITORY https://github.com/gabime/spdlog.git
+                GIT_TAG v1.13.0
+        )
+        FetchContent_MakeAvailable(spdlog)
+    endif ()
+endif ()

@@ -1,5 +1,17 @@
 # Development Guide for ryzen_pm_table_moonitor
 
+## Dependencies
+
+This project relies on several external libraries, which are included as git submodules. The dependencies are:
+
+- imgui (Immediate Mode Graphical User Interface)
+- glfw (Graphics Library Framework)
+- taskflow (Parallel Task Programming Library)
+- implot (Immediate Mode Plotting Library)
+- Boost (specifically Boost PFR for reflection)
+- spdlog (Fast C++ Logging Library)
+
+
 ## Adding Submodules
 
 To add the repositories (imgui, glfw, taskflow, and implot) as submodules to your repo, follow these steps:
@@ -17,6 +29,7 @@ git submodule add https://github.com/ocornut/imgui.git extern/imgui
 git submodule add https://github.com/glfw/glfw.git extern/glfw
 git submodule add https://github.com/taskflow/taskflow.git extern/taskflow
 git submodule add https://github.com/epezent/implot.git extern/implot
+git submodule add https://github.com/gabime/spdlog extern/spdlog
 ```
 
 Stage and commit the changes:

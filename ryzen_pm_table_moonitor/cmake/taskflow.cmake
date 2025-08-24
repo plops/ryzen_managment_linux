@@ -6,6 +6,7 @@ if (NOT Taskflow_FOUND)
     set(TF_BUILD_TESTS OFF CACHE INTERNAL "Disable TaskFlow tests")
     if(EXISTS ${TASKFLOW_SUBMODULE_DIR}/CMakeLists.txt)
         add_subdirectory(${TASKFLOW_SUBMODULE_DIR} extern/taskflow)
+        message(STATUS "taskflow will be built from submodule")
     else()
         FetchContent_Declare(
                 taskflow

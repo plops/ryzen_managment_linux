@@ -5,7 +5,7 @@
 if (CMAKE_BUILD_TYPE STREQUAL "Release")
     message(STATUS "Release build")
     set(CMAKE_CXX_FLAGS_RELEASE
-            "-O3 -march=native -floop-parallelize-all -floop-nest-optimize -floop-interchange"
+            "-O3 -march=native -mtune=native -ffast-math -floop-parallelize-all -floop-nest-optimize -floop-interchange -DNDEBUG"
     )
     set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
 elseif (CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
