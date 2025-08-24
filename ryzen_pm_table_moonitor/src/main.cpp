@@ -219,27 +219,39 @@ void RenderTextWithOutline(const char* text, const ImVec4& text_color)
 
 
 // Helper function to render the detailed content for a given cell.
-// UPDATED to include the MeasurementNamer for displaying and editing names.
-void RenderCellDetails(int index, const CellStats& stats, const StressTester& stress_tester, const std::vector<ImVec4>& core_colors, MeasurementNamer& namer) {
+// UPDATED with an 'is_editable' flag to differentiate between hover tooltips and pinned windows.
+void RenderCellDetails(int index, const CellStats& stats, const StressTester& stress_tester, const std::vector<ImVec4>& core_colors, MeasurementNamer& namer, bool is_editable) {
     std::string chess_index = MeasurementNamer::to_chess_index(index);
     ImGui::Text("Index: %5d, Bytes: %5d .. %5d", index, index * 4, index * 4 + 3);
     ImGui::Text("Chess Index: %s", chess_index.c_str());
 
-    // --- NEW: Display and Edit Measurement Name ---
+    // --- UPDATED: Display/Edit Measurement Name Conditionally ---
     std::string current_name = namer.get_name(chess_index).value_or("");
-    static char name_buffer[128]; // Static buffer for editing
-    strncpy(name_buffer, current_name.c_str(), sizeof(name_buffer) - 1);
-    name_buffer[sizeof(name_buffer) - 1] = '\0'; // Ensure null termination
 
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 50); // Adjust width
-    if (ImGui::InputText("Name", name_buffer, sizeof(name_buffer), ImGuiInputTextFlags_EnterReturnsTrue)) {
-        namer.set_name(chess_index, std::string(name_buffer));
-        namer.save_to_file();
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Save")) {
-        namer.set_name(chess_index, std::string(name_buffer));
-        namer.save_to_file();
+    if (is_editable) {
+        // --- Editable version for the pinned window ---
+        // Use a static buffer to hold the text being edited.
+        static char name_buffer[128];
+        strncpy(name_buffer, current_name.c_str(), sizeof(name_buffer) - 1);
+        name_buffer[sizeof(name_buffer) - 1] = '\0';
+
+        // Set a reasonable fixed width for the input text to avoid layout issues.
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize("Save").x - ImGui::GetStyle().FramePadding.x * 3);
+        if (ImGui::InputText("Name", name_buffer, sizeof(name_buffer), ImGuiInputTextFlags_EnterReturnsTrue)) {
+            namer.set_name(chess_index, std::string(name_buffer));
+            namer.save_to_file();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Save")) {
+            namer.set_name(chess_index, std::string(name_buffer));
+            namer.save_to_file();
+        }
+    } else {
+        // --- Read-only version for the hover tooltip ---
+        // Just display the name using a label. This is safe for auto-sizing windows.
+        if (!current_name.empty()) {
+            ImGui::LabelText("Name", "%s", current_name.c_str());
+        }
     }
 
 
@@ -285,7 +297,6 @@ void RenderCellDetails(int index, const CellStats& stats, const StressTester& st
             values.push_back(sample.value);
         }
 
-        // UPDATED: Check if there's at least one correlated core
         bool has_dominant_core = !stats.top_correlations.empty() && stress_tester.is_running();
 
         if (ImPlot::BeginPlot("##History", ImVec2(400, 200), ImPlotFlags_NoTitle | ImPlotFlags_NoLegend | ImPlotFlags_NoMouseText | (has_dominant_core ? ImPlotFlags_YAxis2 : 0) )) {
@@ -633,7 +644,7 @@ int main() {
                 ImGui::Begin(window_title.c_str(), &window_is_open);
 
                 // Call our refactored helper function to draw the content
-                RenderCellDetails(pinned_index, analysis_results[pinned_index], stress_tester, core_colors, namer);
+                RenderCellDetails(pinned_index, analysis_results[pinned_index], stress_tester, core_colors, namer, true);
 
                 ImGui::End();
             }
@@ -1028,7 +1039,7 @@ int main() {
                         if (ImGui::IsItemHovered()) {
                             ImGui::BeginTooltip();
                             // UPDATED: Pass the namer object to the render function
-                            RenderCellDetails(i, stats, stress_tester, core_colors, namer);
+                            RenderCellDetails(i, stats, stress_tester, core_colors, namer, false);
                             ImGui::EndTooltip();
                         }
                         ImGui::PopID();
