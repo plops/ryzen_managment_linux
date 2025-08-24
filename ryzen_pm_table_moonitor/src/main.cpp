@@ -6,6 +6,7 @@
 #include <map>
 #include <fstream>
 #include <optional>
+#include <functional> // NEW: For std::function
 
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
@@ -29,135 +30,14 @@
 // Make sure toml.hpp is in your project's include path.
 #include "toml++/toml.hpp"
 
+#include "measurement_namer.hpp" // NEW: Include the new header for MeasurementNamer
+
 
 // Required headers for thread scheduling and affinity
 #include <sched.h>
 #include <pthread.h>
 #include <cstring> // For strerror
 
-
-// NEW: A class to manage loading, saving, and accessing measurement names
-class MeasurementNamer {
-private:
-    std::string filepath_;
-    std::map<std::string, std::string> names_;
-    std::mutex mutex_;
-
-    // Helper to convert chess index to decimal
-    static std::optional<int> from_chess_index(const std::string& chess_index) {
-        if (chess_index.length() < 2 || !std::isalpha(chess_index[0])) {
-            return std::nullopt;
-        }
-        char col_char = std::toupper(chess_index[0]);
-        if (col_char < 'A' || col_char > 'H') {
-            return std::nullopt;
-        }
-        int col = col_char - 'A';
-        try {
-            int row = std::stoi(chess_index.substr(1));
-            return row * 8 + col;
-        } catch (const std::exception&) {
-            return std::nullopt;
-        }
-    }
-
-public:
-    explicit MeasurementNamer(std::string filepath) : filepath_(std::move(filepath)) {
-        load_from_file();
-    }
-
-    // Convert an integer index to its chess notation (e.g., 263 -> "H32")
-    static std::string to_chess_index(int index) {
-        if (index < 0) return "Invalid";
-        char col = 'A' + (index % 8);
-        int row = (index / 8);
-        return fmt::format("{}{}", col, row);
-    }
-
-    // NEW: Parses an index string.
-    // If it starts with a digit, it's treated as a decimal index.
-    // Otherwise, it's treated as a chess index.
-    static std::optional<int> parse_index(const std::string& index_str) {
-        if (index_str.empty()) {
-            return std::nullopt;
-        }
-        if (std::isdigit(index_str[0])) {
-            try {
-                return std::stoi(index_str);
-            } catch (const std::exception&) {
-                return std::nullopt;
-            }
-        } else {
-            return from_chess_index(index_str);
-        }
-    }
-
-    void load_from_file() {
-        std::lock_guard<std::mutex> lock(mutex_);
-        try {
-            toml::table tbl = toml::parse_file(filepath_);
-            if (auto names_table = tbl["names"].as_table()) {
-                for (auto&& [key, val] : *names_table) {
-                    if (val.is_string()) {
-                        names_[std::string(key)] = val.as_string()->get();
-                    }
-                }
-                spdlog::info("Successfully loaded {} names from {}", names_.size(), filepath_);
-            }
-        } catch (const toml::parse_error& err) {
-            spdlog::warn("Could not load names file '{}': {}. A new one will be created on save.", filepath_, err.description());
-        }
-    }
-
-    void save_to_file() {
-        std::lock_guard<std::mutex> lock(mutex_);
-        toml::table names_table;
-        for (const auto& [key, val] : names_) {
-            names_table.insert(key, val);
-        }
-
-        toml::table root_table;
-        root_table.insert("names", names_table);
-
-        std::ofstream file(filepath_);
-        if (file.is_open()) {
-            file << root_table;
-            spdlog::info("Saved names to {}", filepath_);
-        } else {
-            spdlog::error("Failed to open {} for writing.", filepath_);
-        }
-    }
-
-    std::optional<std::string> get_name(const std::string& index_str) {
-        std::optional<int> decimal_index = parse_index(index_str);
-        if (!decimal_index) {
-            return std::nullopt;
-        }
-        std::string chess_index = to_chess_index(*decimal_index);
-
-        std::lock_guard<std::mutex> lock(mutex_);
-        auto it = names_.find(chess_index);
-        if (it != names_.end()) {
-            return it->second;
-        }
-        return std::nullopt;
-    }
-
-    void set_name(const std::string& index_str, const std::string& name) {
-        std::optional<int> decimal_index = parse_index(index_str);
-        if (!decimal_index) {
-            return;
-        }
-        std::string chess_index = to_chess_index(*decimal_index);
-
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (name.empty()) {
-            names_.erase(chess_index);
-        } else {
-            names_[chess_index] = name;
-        }
-    }
-};
 
 // Helper function to create a scrolling buffer for plots
 struct ScrollingBuffer {
@@ -968,6 +848,15 @@ int main() {
                         // This runs the heavy analysis on the executor without blocking the GUI or the pipeline.
                         executor.silent_async([&]() {
                             analysis_manager.run_correlation_analysis(&stress_tester);
+
+                            // NEW: After analysis, save results to files
+                            analysis_manager.save_correlation_results_to_files(
+                                "correlation_report", // Base filename prefix
+                                [&](int index) { // Lambda function to get name for a given decimal index
+                                    std::string chess_idx = MeasurementNamer::to_chess_index(index);
+                                    return namer.get_name(chess_idx).value_or("");
+                                }
+                            );
                         });
                         spdlog::info("Analysis task submitted.");
                     } else {
@@ -1174,4 +1063,3 @@ int main() {
     spdlog::info("Shutdown complete");
     return 0;
 }
-

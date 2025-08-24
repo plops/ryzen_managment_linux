@@ -1,8 +1,13 @@
 #include "analysis_manager.hpp"
+#include "measurement_namer.hpp" // NEW: To access MeasurementNamer::to_chess_index
 #include <spdlog/spdlog.h>
 #include <numeric>
 #include <algorithm> // For std::sort and std::find_if
 #include <thread>    // For std::this_thread::sleep_for
+#include <fstream>   // NEW: For file output
+#include <iomanip>   // NEW: For std::put_time and std::setprecision
+#include <chrono>    // NEW: For timestamps
+#include <vector>    // NEW: For collecting strengths for statistics
 
 // This is the "hot path" - it runs for every sample from the PM Table.
 void AnalysisManager::process_data_packet(const TimestampedData& current_data) {
@@ -135,7 +140,7 @@ void AnalysisManager::run_correlation_analysis(StressTester* stress_tester) {
 
     // --- Step 4: Cleanup ---
     for (int i = 0; i < core_count; ++i) {
-        stress_tester->set_thread_busy_state(i, true);
+        stress_tester->set_thread_busy_state(i, true); // Restore all cores to busy by default
     }
     spdlog::info("Full correlation analysis complete. All results are now displayed.");
 }
@@ -188,4 +193,116 @@ void AnalysisManager::reset_stats() {
 std::vector<CellStats> AnalysisManager::get_analysis_results() {
     std::lock_guard<std::mutex> lock(results_mutex_);
     return analysis_results_;
+}
+
+// NEW: Implementation of the save function
+void AnalysisManager::save_correlation_results_to_files(
+    const std::string& base_filename_prefix,
+    std::function<std::string(int index)> get_name_func
+) {
+    std::lock_guard<std::mutex> lock(results_mutex_); // Lock access to analysis_results_
+
+    if (analysis_results_.empty()) {
+        spdlog::warn("No analysis results to save.");
+        return;
+    }
+
+    // Generate a timestamp for the filenames
+    auto now = std::chrono::system_clock::now();
+    std::time_t now_c = std::chrono::system_clock::to_time_t(now);
+    std::stringstream ss;
+    ss << std::put_time(std::localtime(&now_c), "%Y%m%d_%H%M%S");
+    std::string timestamp_str = ss.str();
+
+    std::string table_filename = base_filename_prefix + "_table_" + timestamp_str + ".csv";
+    std::string summary_filename = base_filename_prefix + "_summary_" + timestamp_str + ".csv";
+
+    // --- Open Files ---
+    std::ofstream table_file(table_filename);
+    if (!table_file.is_open()) {
+        spdlog::error("Failed to open file for correlation table: {}", table_filename);
+        return;
+    }
+    std::ofstream summary_file(summary_filename);
+    if (!summary_file.is_open()) {
+        spdlog::error("Failed to open file for correlation summary: {}", summary_filename);
+        table_file.close(); // Close the first file if the second fails
+        return;
+    }
+
+    // --- Write Table Header ---
+    table_file << "Index,Chess Index,Name,Live Value,Min Value,Max Value,Mean Value,StdDev Value";
+    const int max_correlations_to_report = 4; // Same as in update_or_insert_correlation
+    for (int i = 1; i <= max_correlations_to_report; ++i) {
+        table_file << ",Top" << i << " Core ID"
+                   << ",Top" << i << " Strength"
+                   << ",Top" << i << " Quality";
+    }
+    table_file << "\n";
+
+    // --- Collect all correlation strengths for overall statistics ---
+    std::vector<float> all_correlation_strengths;
+    all_correlation_strengths.reserve(analysis_results_.size() * max_correlations_to_report); // Pre-allocate
+
+    // --- Write Table Data and collect strengths ---
+    for (size_t i = 0; i < analysis_results_.size(); ++i) {
+        const auto& stats = analysis_results_[i];
+        std::string name = get_name_func(static_cast<int>(i));
+
+        table_file << i << ","
+                   << MeasurementNamer::to_chess_index(static_cast<int>(i)) << ","
+                   << "\"" << name << "\"," // Enclose name in quotes to handle commas
+                   << std::fixed << std::setprecision(3) << stats.current_val << ","
+                   << std::fixed << std::setprecision(3) << stats.min_val << ","
+                   << std::fixed << std::setprecision(3) << stats.max_val << ","
+                   << std::fixed << std::setprecision(3) << stats.mean << ","
+                   << std::fixed << std::setprecision(3) << stats.get_stddev();
+
+        for (int j = 0; j < max_correlations_to_report; ++j) {
+            if (j < stats.top_correlations.size()) {
+                const auto& corr = stats.top_correlations[j];
+                table_file << "," << corr.core_id
+                           << "," << std::fixed << std::setprecision(3) << corr.correlation_strength
+                           << "," << std::fixed << std::setprecision(3) << corr.correlation_quality;
+                all_correlation_strengths.push_back(corr.correlation_strength);
+            } else {
+                table_file << ",N/A,N/A,N/A"; // Placeholder for missing correlations
+            }
+        }
+        table_file << "\n";
+    }
+
+    table_file.close();
+    spdlog::info("Correlation table saved to {}", table_filename);
+
+    // --- Write Summary Statistics ---
+    if (!all_correlation_strengths.empty()) {
+        std::sort(all_correlation_strengths.begin(), all_correlation_strengths.end());
+
+        float min_strength = all_correlation_strengths.front();
+        float max_strength = all_correlation_strengths.back();
+
+        double sum_strength = std::accumulate(all_correlation_strengths.begin(), all_correlation_strengths.end(), 0.0);
+        double mean_strength = sum_strength / all_correlation_strengths.size();
+
+        float median_strength;
+        size_t mid = all_correlation_strengths.size() / 2;
+        if (all_correlation_strengths.size() % 2 == 0) {
+            median_strength = (all_correlation_strengths[mid - 1] + all_correlation_strengths[mid]) / 2.0f;
+        } else {
+            median_strength = all_correlation_strengths[mid];
+        }
+
+        summary_file << "Statistic,Value\n";
+        summary_file << "Min Strength," << std::fixed << std::setprecision(3) << min_strength << "\n";
+        summary_file << "Max Strength," << std::fixed << std::setprecision(3) << max_strength << "\n";
+        summary_file << "Mean Strength," << std::fixed << std::setprecision(3) << mean_strength << "\n";
+        summary_file << "Median Strength," << std::fixed << std::setprecision(3) << median_strength << "\n";
+
+    } else {
+        summary_file << "No correlation strengths recorded.\n";
+    }
+
+    summary_file.close();
+    spdlog::info("Correlation summary saved to {}", summary_filename);
 }

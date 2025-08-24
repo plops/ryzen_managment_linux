@@ -152,7 +152,7 @@ private:
                 }
             }
             if (is_prime) {
-                primes.push_back(std::chrono::milliseconds(num*10));
+                primes.push_back(std::chrono::milliseconds(num*2));
             }
             num += 2;
         }
