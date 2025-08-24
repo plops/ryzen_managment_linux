@@ -13,6 +13,7 @@
 #include <boost/pfr.hpp>
 #include <string>
 #include <taskflow/taskflow.hpp>
+#include <taskflow/algorithm/pipeline.hpp>
 #include <type_traits>
 #include "pm_table_reader.hpp"
 // --- Add analysis and stress includes ---
@@ -20,6 +21,12 @@
 #include "analysis_manager.hpp"
 #include "analysis.hpp"
 #include <random>
+
+#include <taskflow/taskflow.hpp>
+#include "pm_table_reader.hpp"
+#include "stress_tester.hpp"
+#include "analysis_manager.hpp"
+#include <atomic> // For the stop flag
 
 // Helper function to create a scrolling buffer for plots
 struct ScrollingBuffer {
@@ -164,22 +171,101 @@ int main() {
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 330");
 
-    // --- New Architecture Setup ---
+    // 1. === Centralized Concurrency Setup ===
+    tf::Executor executor;
+    std::atomic<bool> stop_pipeline{false};
+
+    // 2. === Instantiate Simplified Components ===
     StressTester stress_tester;
     AnalysisManager analysis_manager;
-    PMTableReader pm_table_reader(analysis_manager); // Pass manager to reader
+    PMTableReader pm_table_reader;
 
-    // TaskFlow setup for the reader thread
-    tf::Executor executor;
-    tf::Taskflow taskflow;
-    taskflow.emplace([&]() {
-        spdlog::info("Starting PM table reading thread");
-        pm_table_reader.start_reading();
-    });
+    // 3. === Define the Data Processing Pipeline ===
+
+    // This is the number of concurrent data packets that can be "in-flight".
+    const size_t num_concurrent_pipelines = 4;
+
+    // The shared data buffer for the pipeline stages to communicate through.
+    std::vector<TimestampedData> data_buffer(num_concurrent_pipelines);
+
+    tf::Taskflow taskflow("PM_Table_Pipeline");
+    tf::Pipeline pipeline(num_concurrent_pipelines,
+        // Stage 1: Producer (Reads from file and WRITES to the shared buffer)
+        tf::Pipe{tf::PipeType::SERIAL, [&](tf::Pipeflow& pf) {
+            if (stop_pipeline.load(std::memory_order_relaxed)) {
+                pf.stop();
+                return;
+            }
+
+            // --- Logic moved from PMTableReader::read_loop ---
+            static std::ifstream pm_table_file(pm_table_reader.pm_table_path_, std::ios::binary);
+            static auto read_buffer = std::vector<float>(1024);
+            static int bytes_to_read = -1;
+
+            if (!pm_table_file.is_open()) {
+                if(!stop_pipeline) spdlog::error("PMTableReader: Failed to open file: {}", pm_table_reader.pm_table_path_);
+                stop_pipeline = true;
+                pf.stop();
+                return;
+            }
+            if (bytes_to_read == -1) {
+                pm_table_file.read(reinterpret_cast<char*>(read_buffer.data()), read_buffer.size() * sizeof(float));
+                int bytes_read = pm_table_file.gcount();
+                if (bytes_read > 0) {
+                     bytes_to_read = (bytes_read / sizeof(float)) * sizeof(float);
+                     read_buffer.resize(bytes_read / sizeof(float));
+                     spdlog::info("PMTableReader: Detected PM table size of {} bytes.", bytes_to_read);
+                } else {
+                     spdlog::error("PMTableReader: Failed to get initial PM table size.");
+                     stop_pipeline = true;
+                     pf.stop();
+                     return;
+                }
+            }
+
+            const std::chrono::microseconds target_period{1000};
+            static auto next_wakeup = std::chrono::high_resolution_clock::now() + target_period;
+
+            std::this_thread::sleep_until(next_wakeup);
+            auto timestamp = std::chrono::steady_clock::now();
+
+            pm_table_file.clear();
+            pm_table_file.seekg(0, std::ios::beg);
+            pm_table_file.read(reinterpret_cast<char*>(read_buffer.data()), bytes_to_read);
+
+            if (pm_table_file.gcount() > 0) {
+                long long timestamp_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(timestamp.time_since_epoch()).count();
+
+                // CORRECTED LOGIC: Place the result in the shared buffer at the current pipeline's line index.
+                data_buffer[pf.line()] = {timestamp_ns, read_buffer};
+            }
+            next_wakeup += target_period;
+        }},
+
+        // Stage 2: Consumer (READS from the shared buffer and processes data)
+        tf::Pipe{tf::PipeType::PARALLEL, [&](tf::Pipeflow& pf) {
+            // CORRECTED LOGIC: Get a reference to the data produced by stage 1 on the same line.
+            const TimestampedData& data = data_buffer[pf.line()];
+
+            // 2a. Update the high-frequency analysis data
+            analysis_manager.process_data_packet(data);
+
+            // 2b. Update the decoded data for the GUI's "Decoded View" tab
+            {
+                std::lock_guard<std::mutex> lock(pm_table_reader.data_mutex_);
+                pm_table_reader.latest_data_ = parse_pm_table_0x400005(data.data);
+            }
+        }}
+    );
+
+
+    // Add the pipeline to the main taskflow
+    taskflow.composed_of(pipeline);
+
+    // 4. === Run the Pipeline ===
+    // This runs the pipeline indefinitely until pf.stop() is called.
     executor.run(taskflow);
 
-    // Start the analysis thread
-    analysis_manager.start(&stress_tester);
 
     // Buffers for grouped plots
     // Frequencies
@@ -536,15 +622,22 @@ int main() {
                 ImGui::SameLine();
                 if (ImGui::Button("Run Analysis")) {
                     if (stress_tester.is_running()) {
-                        analysis_manager.trigger_analysis();
-                        spdlog::info("Analysis triggered.");
+                        // 5. === Submit Analysis as a Detached Task ===
+                        // This runs the heavy analysis on the executor without blocking the GUI or the pipeline.
+                        executor.silent_async([&]() {
+                            analysis_manager.run_correlation_analysis(&stress_tester);
+                        });
+                        spdlog::info("Analysis task submitted.");
                     } else {
                         spdlog::warn("Start stress threads before running analysis.");
                     }
                 }
                 ImGui::SameLine();
                 if (ImGui::Button("Reset Stats")) {
-                    analysis_manager.reset_stats();
+                    // Also submit as a task to ensure thread safety.
+                    executor.silent_async([&]() {
+                       analysis_manager.reset_stats();
+                   });
                 }
 
                 ImGui::Text("Core Color Legend:"); ImGui::SameLine();
@@ -639,8 +732,9 @@ int main() {
     }
 
     spdlog::info("Exiting main loop...");
-    analysis_manager.stop();
-    pm_table_reader.stop_reading();
+    // 6. === Coordinated Shutdown ===
+    stop_pipeline = true;  // Signal the pipeline to stop producing tokens
+    executor.wait_for_all(); // Wait for all tasks, including the pipeline, to finish
     stress_tester.stop();
 
     // --- Cleanup ---

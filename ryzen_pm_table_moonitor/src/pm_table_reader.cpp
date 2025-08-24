@@ -1,131 +1,119 @@
+// start of pm_table_reader.cpp
 #include "pm_table_reader.hpp"
-#include "jitter_monitor.hpp"
-#include <algorithm>
 #include <fstream>
 #include <spdlog/spdlog.h>
-#include <chrono>
-#include <sched.h>
-#include <cerrno>
-#include <cstring>
 
-PMTableReader::PMTableReader(AnalysisManager& manager, const std::string &path)
-    : analysis_manager_(manager), pm_table_path_(path) {}
+// Constructor is simplified
+PMTableReader::PMTableReader(const std::string &path) : pm_table_path_(path) {}
 
-void PMTableReader::start_reading() {
-    spdlog::info("PMTableReader: Starting reading thread");
-    running_       = true;
-    reader_thread_ = std::thread(&PMTableReader::read_loop, this);
+// void PMTableReader::start_reading() {
+//     spdlog::info("PMTableReader: Starting reading thread");
+//     running_       = true;
+//     reader_thread_ = std::thread(&PMTableReader::read_loop, this);
+//
+//     // --- ENABLE REAL-TIME SCHEDULING ---
+//
+//     // SCHED_FIFO is a real-time policy that runs threads to completion or until
+//     // they block or are preempted by a higher-priority thread.
+//     const int policy = SCHED_FIFO;
+//
+//     // Set a high priority (1-99 for SCHED_FIFO).
+//     // Be careful not to starve critical system threads. 80 is a reasonably high value.
+//     sched_param params;
+//     params.sched_priority = 80;
+//
+//     // pthread_setschedparam requires the native thread handle.
+//     // The first argument is the thread ID, the second is the policy, and the third
+//     // is a pointer to the scheduling parameters.
+//     int ret = pthread_setschedparam(reader_thread_.native_handle(), policy, &params);
+//     if (ret != 0) {
+//         // Use strerror to get a human-readable error message.
+//         // A common error is EPERM (Operation not permitted), which means you
+//         // need to run the application with sufficient privileges (e.g., sudo).
+//         spdlog::error("PMTableReader: Failed to set thread scheduling policy. Error: {}", strerror(ret));
+//     } else {
+//         spdlog::info("PMTableReader: Successfully set thread scheduling policy to SCHED_FIFO with priority {}", params.sched_priority);
+//     }
+//
+//     // --- OPTIONAL: SET CPU AFFINITY ---
+//     cpu_set_t cpuset;
+//     CPU_ZERO(&cpuset);
+//     // Pin the thread to a specific core, e.g., core 3
+//     CPU_SET(3, &cpuset);
+//
+//     ret = pthread_setaffinity_np(reader_thread_.native_handle(), sizeof(cpu_set_t), &cpuset);
+//     if (ret != 0) {
+//         spdlog::error("PMTableReader: Failed to set thread CPU affinity. Error: {}", strerror(ret));
+//     } else {
+//         spdlog::info("PMTableReader: Successfully pinned reader thread to CPU 3");
+//     }
+// }
 
-    // --- ENABLE REAL-TIME SCHEDULING ---
-
-    // SCHED_FIFO is a real-time policy that runs threads to completion or until
-    // they block or are preempted by a higher-priority thread.
-    const int policy = SCHED_FIFO;
-
-    // Set a high priority (1-99 for SCHED_FIFO).
-    // Be careful not to starve critical system threads. 80 is a reasonably high value.
-    sched_param params;
-    params.sched_priority = 80;
-
-    // pthread_setschedparam requires the native thread handle.
-    // The first argument is the thread ID, the second is the policy, and the third
-    // is a pointer to the scheduling parameters.
-    int ret = pthread_setschedparam(reader_thread_.native_handle(), policy, &params);
-    if (ret != 0) {
-        // Use strerror to get a human-readable error message.
-        // A common error is EPERM (Operation not permitted), which means you
-        // need to run the application with sufficient privileges (e.g., sudo).
-        spdlog::error("PMTableReader: Failed to set thread scheduling policy. Error: {}", strerror(ret));
-    } else {
-        spdlog::info("PMTableReader: Successfully set thread scheduling policy to SCHED_FIFO with priority {}", params.sched_priority);
-    }
-
-    // --- OPTIONAL: SET CPU AFFINITY ---
-    cpu_set_t cpuset;
-    CPU_ZERO(&cpuset);
-    // Pin the thread to a specific core, e.g., core 3
-    CPU_SET(3, &cpuset);
-
-    ret = pthread_setaffinity_np(reader_thread_.native_handle(), sizeof(cpu_set_t), &cpuset);
-    if (ret != 0) {
-        spdlog::error("PMTableReader: Failed to set thread CPU affinity. Error: {}", strerror(ret));
-    } else {
-        spdlog::info("PMTableReader: Successfully pinned reader thread to CPU 3");
-    }
-}
-
-void PMTableReader::stop_reading() {
-    spdlog::info("PMTableReader: Stopping reading thread");
-    running_ = false;
-    if (reader_thread_.joinable()) {
-        reader_thread_.join();
-        spdlog::info("PMTableReader: Reading thread stopped");
-    }
-}
 
 std::optional<PMTableData> PMTableReader::get_latest_data() {
     std::lock_guard<std::mutex> lock(data_mutex_);
-    if (latest_data_.core_cc1.empty()) {
+    if (latest_data_.core_cc1.empty()) { // Check if it has been populated
         return std::nullopt;
     }
     return latest_data_;
 }
 
-void PMTableReader::read_loop() {
-    const std::chrono::microseconds target_period{1000};
-    std::ifstream pm_table_file(pm_table_path_, std::ios::binary);
-    if (!pm_table_file.is_open()) {
-        spdlog::error("PMTableReader: Failed to open file: {}", pm_table_path_);
-        return;
-    }
-
-    std::vector<float> buffer(1024);
-    pm_table_file.read(reinterpret_cast<char*>(buffer.data()), buffer.size() * sizeof(float));
-    int bytes_read = pm_table_file.gcount();
-    if (bytes_read <= 0) {
-        spdlog::error("PMTableReader: Failed to read initial data from PM table. Exiting loop.");
-        return;
-    }
-
-    auto floats_to_read = bytes_read / sizeof(float);
-    int bytes_to_read = floats_to_read * sizeof(float);
-    buffer.resize(floats_to_read);
-    spdlog::info("PMTableReader: Detected PM table size of {} bytes ({} floats).", bytes_to_read, floats_to_read);
-
-    JitterMonitor jitter_monitor(target_period.count(), 5000 /* samples before reporting */, 2500);
-
-    auto next_wakeup = std::chrono::high_resolution_clock::now() + target_period;
-    std::chrono::time_point<std::chrono::steady_clock> last_read_time = std::chrono::steady_clock::now();
-    while (running_) {
-        pm_table_file.clear();
-        pm_table_file.seekg(0, std::ios::beg);
-        std::this_thread::sleep_until(next_wakeup);
-        // Just after the wakeup take the time and perform the read on the procfs file
-        auto timestamp = std::chrono::steady_clock::now();
-        pm_table_file.read(reinterpret_cast<char*>(buffer.data()), bytes_to_read);
-        bytes_read = pm_table_file.gcount();
-
-        if (bytes_read > 0) {
-            // 1. Submit timestamped raw data to the analysis thread
-            long long timestamp_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(timestamp.time_since_epoch()).count();
-            analysis_manager_.submit_data({timestamp_ns, std::vector<float>(buffer.begin(), buffer.end())});
-
-            // 2. Parse and store the decoded data for other GUI tabs
-            PMTableData new_data = parse_pm_table_0x400005(buffer);
-            {
-                std::lock_guard<std::mutex> lock(data_mutex_);
-                latest_data_ = std::move(new_data);
-            }
-        } else {
-            spdlog::warn("PMTableReader: No data read from PM table");
-        }
-        long long period_us = std::chrono::duration_cast<std::chrono::microseconds>(timestamp - last_read_time).count();
-        jitter_monitor.record_sample(period_us);
-        last_read_time = timestamp;
-        next_wakeup += target_period;
-    }
-    spdlog::info("PMTableReader: Exiting read loop");
-}
+//
+// void PMTableReader::read_loop() {
+//     const std::chrono::microseconds target_period{1000};
+//     std::ifstream pm_table_file(pm_table_path_, std::ios::binary);
+//     if (!pm_table_file.is_open()) {
+//         spdlog::error("PMTableReader: Failed to open file: {}", pm_table_path_);
+//         return;
+//     }
+//
+//     std::vector<float> buffer(1024);
+//     pm_table_file.read(reinterpret_cast<char*>(buffer.data()), buffer.size() * sizeof(float));
+//     int bytes_read = pm_table_file.gcount();
+//     if (bytes_read <= 0) {
+//         spdlog::error("PMTableReader: Failed to read initial data from PM table. Exiting loop.");
+//         return;
+//     }
+//
+//     auto floats_to_read = bytes_read / sizeof(float);
+//     int bytes_to_read = floats_to_read * sizeof(float);
+//     buffer.resize(floats_to_read);
+//     spdlog::info("PMTableReader: Detected PM table size of {} bytes ({} floats).", bytes_to_read, floats_to_read);
+//
+//     JitterMonitor jitter_monitor(target_period.count(), 5000 /* samples before reporting */, 2500);
+//
+//     auto next_wakeup = std::chrono::high_resolution_clock::now() + target_period;
+//     std::chrono::time_point<std::chrono::steady_clock> last_read_time = std::chrono::steady_clock::now();
+//     while (running_) {
+//         pm_table_file.clear();
+//         pm_table_file.seekg(0, std::ios::beg);
+//         std::this_thread::sleep_until(next_wakeup);
+//         // Just after the wakeup take the time and perform the read on the procfs file
+//         auto timestamp = std::chrono::steady_clock::now();
+//         pm_table_file.read(reinterpret_cast<char*>(buffer.data()), bytes_to_read);
+//         bytes_read = pm_table_file.gcount();
+//
+//         if (bytes_read > 0) {
+//             // 1. Submit timestamped raw data to the analysis thread
+//             long long timestamp_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(timestamp.time_since_epoch()).count();
+//             analysis_manager_.submit_data({timestamp_ns, std::vector<float>(buffer.begin(), buffer.end())});
+//
+//             // 2. Parse and store the decoded data for other GUI tabs
+//             PMTableData new_data = parse_pm_table_0x400005(buffer);
+//             {
+//                 std::lock_guard<std::mutex> lock(data_mutex_);
+//                 latest_data_ = std::move(new_data);
+//             }
+//         } else {
+//             spdlog::warn("PMTableReader: No data read from PM table");
+//         }
+//         long long period_us = std::chrono::duration_cast<std::chrono::microseconds>(timestamp - last_read_time).count();
+//         jitter_monitor.record_sample(period_us);
+//         last_read_time = timestamp;
+//         next_wakeup += target_period;
+//     }
+//     spdlog::info("PMTableReader: Exiting read loop");
+// }
 
 PMTableData parse_pm_table_0x400005(const std::vector<float> &buffer) {
     PMTableData v;

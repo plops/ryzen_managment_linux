@@ -3,53 +3,20 @@
 #include <numeric>
 #include <algorithm> // For std::sort
 
-void AnalysisManager::analysis_loop() {
-    spdlog::info("Analysis thread started.");
-    while (is_running_) {
-        process_queue();
-
-        if (reset_stats_flag_) {
-            std::lock_guard<std::mutex> lock(results_mutex_);
-            for (auto& stats : analysis_results_) {
-                stats.reset();
-            }
-            reset_stats_flag_ = false;
-        }
-
-        if (run_analysis_flag_) {
-            run_correlation_analysis();
-            run_analysis_flag_ = false; // Reset flag
-        }
+// This is the "hot path" - it runs for every sample from the PM Table.
+void AnalysisManager::process_data_packet(const TimestampedData& current_data) {
+    std::lock_guard<std::mutex> results_lock(results_mutex_);
+    if (analysis_results_.size() != current_data.data.size()) {
+        analysis_results_.assign(current_data.data.size(), CellStats());
     }
-    spdlog::info("Analysis thread stopped.");
-}
 
-void AnalysisManager::process_queue() {
-    std::unique_lock<std::mutex> lock(queue_mutex_);
-    queue_cv_.wait(lock, [this] { return !data_queue_.empty() || !is_running_; });
-
-    if (!is_running_) return;
-
-    while (!data_queue_.empty()) {
-        TimestampedData current_data = std::move(data_queue_.front());
-        data_queue_.pop();
-        lock.unlock();
-
-        {
-            std::lock_guard<std::mutex> results_lock(results_mutex_);
-            if (analysis_results_.size() != current_data.data.size()) {
-                analysis_results_.assign(current_data.data.size(), CellStats());
-            }
-
-            for (size_t i = 0; i < current_data.data.size(); ++i) {
-                analysis_results_[i].add_sample(current_data.data[i], current_data.timestamp_ns);
-            }
-        }
-        lock.lock();
+    for (size_t i = 0; i < current_data.data.size(); ++i) {
+        analysis_results_[i].add_sample(current_data.data[i], current_data.timestamp_ns);
     }
 }
 
-// A small struct to hold the analysis result for a single core's stress pattern
+// A small struct to hold the analysis result for a single core's stress pattern.
+// Define it here, local to the function that uses it.
 struct CoreCorrelationResult {
     int core_id = -1;
     double abs_diff = 0.0;
@@ -62,29 +29,31 @@ struct CoreCorrelationResult {
     }
 };
 
-void AnalysisManager::run_correlation_analysis() {
-    if (!stress_tester_ || !stress_tester_->is_running()) {
+
+// This is the "cold path" - it runs only when the user clicks the button.
+void AnalysisManager::run_correlation_analysis(const StressTester* stress_tester) {
+    if (!stress_tester || !stress_tester->is_running()) {
         spdlog::warn("Analysis skipped: stress tester is not running.");
         return;
     }
 
-    spdlog::debug("Running correlation analysis...");
+    spdlog::info("Running correlation analysis...");
     std::lock_guard<std::mutex> lock(results_mutex_);
     if (analysis_results_.empty() || analysis_results_[0].history.empty()) {
         spdlog::warn("Analysis skipped: not enough historical data yet.");
         return;
     }
 
-    const auto& periods = stress_tester_->get_periods();
-    const auto stress_start_time = stress_tester_->get_start_time();
+    const auto& periods = stress_tester->get_periods();
+    const auto stress_start_time = stress_tester->get_start_time();
     const long long stress_start_time_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(stress_start_time.time_since_epoch()).count();
 
     for (size_t i = 0; i < analysis_results_.size(); ++i) {
         auto& cell = analysis_results_[i];
 
         // --- Step 1: Calculate correlation strength for ALL cores ---
-        std::vector<CoreCorrelationResult> core_results;
-        for (int core_id = 0; core_id < stress_tester_->get_core_count(); ++core_id) {
+        std::vector<CoreCorrelationResult> core_results; // Now the type is defined
+        for (int core_id = 0; core_id < stress_tester->get_core_count(); ++core_id) {
             const long long period_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(periods[core_id]).count();
             const long long work_duration_ns = period_ns / 3;
 
@@ -128,7 +97,7 @@ void AnalysisManager::run_correlation_analysis() {
         // Normalize strength based on signal range
         double range = cell.max_val - cell.min_val;
         if (range > 1e-6) {
-            cell.correlation_strength = std::min(1.0, best_result.abs_diff / range);
+            cell.correlation_strength = static_cast<float>(std::min(1.0, best_result.abs_diff / range));
         } else {
             cell.correlation_strength = 0.0f;
         }
@@ -156,4 +125,17 @@ void AnalysisManager::run_correlation_analysis() {
         cell.correlation_quality = static_cast<float>(separation_factor * confidence_factor);
     }
     spdlog::info("Correlation analysis complete.");
+}
+
+void AnalysisManager::reset_stats() {
+    spdlog::info("Resetting statistics...");
+    std::lock_guard<std::mutex> lock(results_mutex_);
+    for (auto& stats : analysis_results_) {
+        stats.reset();
+    }
+}
+
+std::vector<CellStats> AnalysisManager::get_analysis_results() {
+    std::lock_guard<std::mutex> lock(results_mutex_);
+    return analysis_results_;
 }

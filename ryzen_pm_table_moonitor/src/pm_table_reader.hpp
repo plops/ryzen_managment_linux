@@ -1,11 +1,12 @@
+// start of pm_table_reader.hpp
 #pragma once
 
 #include <mutex>
 #include <optional>
 #include <string>
-#include <thread>
 #include <vector>
-#include "analysis_manager.hpp"
+// NO LONGER INCLUDES analysis_manager.hpp, it's now decoupled.
+
 
 struct PMTableData {
     // Only fields marked with //o in pm_tables.c, using 0x400005 as reference
@@ -61,22 +62,26 @@ struct PMTableData {
     // Add more fields as needed
 };
 
+
 PMTableData parse_pm_table_0x400005(const std::vector<float> &buffer);
 
 class PMTableReader {
 public:
-    explicit PMTableReader(AnalysisManager& manager, const std::string &path = "/sys/kernel/ryzen_smu_drv/pm_table");
-    void                       start_reading();
-    void                       stop_reading();
+    // Path is now optional in the constructor
+    explicit PMTableReader(const std::string &path = "/sys/kernel/ryzen_smu_drv/pm_table");
+
+    // The main loop is gone. No start/stop.
+
     std::optional<PMTableData> get_latest_data();
 
 private:
-    void read_loop();
-
+    // These members are no longer needed for the pipeline,
+    // but we keep latest_data_ and its mutex for the "Decoded View" tab
+    // which is not part of the high-frequency analysis path.
     std::string pm_table_path_;
-    std::atomic<bool> running_{false};
-    std::thread reader_thread_;
     std::mutex  data_mutex_;
     PMTableData latest_data_;
-    AnalysisManager& analysis_manager_;
+
+    // Friend declaration to allow main pipeline to access private members
+    friend int main();
 };
