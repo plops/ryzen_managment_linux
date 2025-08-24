@@ -29,7 +29,7 @@ void PMTableReader::start_reading() {
 
     // pthread_setschedparam requires the native thread handle.
     // The first argument is the thread ID, the second is the policy, and the third
-    // is a pointer to the scheduling parameters
+    // is a pointer to the scheduling parameters.
     int ret = pthread_setschedparam(reader_thread_.native_handle(), policy, &params);
     if (ret != 0) {
         // Use strerror to get a human-readable error message.
