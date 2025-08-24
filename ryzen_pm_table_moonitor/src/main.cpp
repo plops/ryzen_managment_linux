@@ -434,7 +434,7 @@ int main() {
                     ImGui::Text("Raw PM Table Data (%zu floats)", raw_data.size());
                     ImGui::Text("Hover over a cell to see its index.");
 
-                    const int num_columns = 16;
+                    const int num_columns = 32;
                     if (ImGui::BeginTable("RawDataTable", num_columns, ImGuiTableFlags_Borders | ImGuiTableFlags_SizingFixedFit)) {
                         ImGui::TableSetupScrollFreeze(0, 1);
                         for (int col = 0; col < num_columns; ++col) {
@@ -442,7 +442,7 @@ int main() {
                         }
                         ImGui::TableHeadersRow();
 
-                        for (int i = 0; i < static_cast<int>(raw_data.size()) && i < 256; ++i) {
+                        for (int i = 0; i < static_cast<int>(raw_data.size()) && i < 1024; ++i) {
                             if (i % num_columns == 0) {
                                 ImGui::TableNextRow();
                             }
