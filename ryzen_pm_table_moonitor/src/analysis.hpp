@@ -22,7 +22,7 @@ struct CellStats {
     int count = 0;
 
     // For correlation analysis
-    static constexpr int HISTORY_SIZE = 256;
+    static constexpr int HISTORY_SIZE = 2'000; // Increased to 400 for hover graph
     std::deque<TimestampedSample> history; // Use deque for efficient front removal
     int dominant_core_id = -1;
     float correlation_strength = 0.0f; // Represents the absolute difference between on-state and off-state means
