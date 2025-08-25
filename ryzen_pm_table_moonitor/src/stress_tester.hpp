@@ -151,7 +151,7 @@ private:
                 }
             }
             if (is_prime) {
-                primes.emplace_back(num*3);
+                primes.push_back(std::chrono::milliseconds(num*2));
             }
             num += 2;
         }

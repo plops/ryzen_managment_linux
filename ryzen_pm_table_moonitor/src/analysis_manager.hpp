@@ -4,6 +4,8 @@
 #include "stress_tester.hpp"
 #include <vector>
 #include <mutex>
+#include <atomic>
+#include <functional> // NEW: For std::function
 
 // Struct to hold a vector of raw data with its capture timestamp
 struct TimestampedData {
@@ -25,11 +27,21 @@ public:
     // This will be called by a task submitted from the GUI.
     // CHANGED: The stress_tester is no longer const, as we need to change its state.
     void run_correlation_analysis(StressTester* stress_tester);
-
     // This will be called by a task submitted from the GUI.
     void reset_stats();
 
+    // NEW: Save correlation results and statistics to files.
+    // get_name_func: A function that takes a decimal index (int) and returns its corresponding string name.
+    void save_correlation_results_to_files(
+        const std::string& base_filename_prefix,
+        std::function<std::string(int index)> get_name_func
+    );
+
 private:
+
+    // A helper to update a cell's correlation list after a core is measured.
+    void update_or_insert_correlation(CellStats& stats, int core_id, float new_strength);
+
     // Analysis results remain, protected by a mutex for GUI access.
     std::vector<CellStats> analysis_results_;
     std::mutex results_mutex_;

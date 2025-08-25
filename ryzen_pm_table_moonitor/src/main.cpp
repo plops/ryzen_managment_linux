@@ -6,6 +6,7 @@
 #include <map>
 #include <fstream>
 #include <optional>
+#include <functional> // NEW: For std::function
 
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
@@ -29,135 +30,14 @@
 // Make sure toml.hpp is in your project's include path.
 #include "toml++/toml.hpp"
 
+#include "measurement_namer.hpp" // NEW: Include the new header for MeasurementNamer
+
 
 // Required headers for thread scheduling and affinity
 #include <sched.h>
 #include <pthread.h>
 #include <cstring> // For strerror
 
-
-// NEW: A class to manage loading, saving, and accessing measurement names
-class MeasurementNamer {
-private:
-    std::string filepath_;
-    std::map<std::string, std::string> names_;
-    std::mutex mutex_;
-
-    // Helper to convert chess index to decimal
-    static std::optional<int> from_chess_index(const std::string& chess_index) {
-        if (chess_index.length() < 2 || !std::isalpha(chess_index[0])) {
-            return std::nullopt;
-        }
-        char col_char = std::toupper(chess_index[0]);
-        if (col_char < 'A' || col_char > 'P') {
-            return std::nullopt;
-        }
-        int col = col_char - 'A';
-        try {
-            int row = std::stoi(chess_index.substr(1));
-            return row * 16 + col;
-        } catch (const std::exception&) {
-            return std::nullopt;
-        }
-    }
-
-public:
-    explicit MeasurementNamer(std::string filepath) : filepath_(std::move(filepath)) {
-        load_from_file();
-    }
-
-    // Convert an integer index to its chess notation (e.g., 263 -> "H32")
-    static std::string to_chess_index(int index) {
-        if (index < 0) return "Invalid";
-        char col = 'A' + (index % 16);
-        int row = (index / 16);
-        return fmt::format("{}{}", col, row);
-    }
-
-    // NEW: Parses an index string.
-    // If it starts with a digit, it's treated as a decimal index.
-    // Otherwise, it's treated as a chess index.
-    static std::optional<int> parse_index(const std::string& index_str) {
-        if (index_str.empty()) {
-            return std::nullopt;
-        }
-        if (std::isdigit(index_str[0])) {
-            try {
-                return std::stoi(index_str);
-            } catch (const std::exception&) {
-                return std::nullopt;
-            }
-        } else {
-            return from_chess_index(index_str);
-        }
-    }
-
-    void load_from_file() {
-        std::lock_guard<std::mutex> lock(mutex_);
-        try {
-            toml::table tbl = toml::parse_file(filepath_);
-            if (auto names_table = tbl["names"].as_table()) {
-                for (auto&& [key, val] : *names_table) {
-                    if (val.is_string()) {
-                        names_[std::string(key)] = val.as_string()->get();
-                    }
-                }
-                spdlog::info("Successfully loaded {} names from {}", names_.size(), filepath_);
-            }
-        } catch (const toml::parse_error& err) {
-            spdlog::warn("Could not load names file '{}': {}. A new one will be created on save.", filepath_, err.description());
-        }
-    }
-
-    void save_to_file() {
-        std::lock_guard<std::mutex> lock(mutex_);
-        toml::table names_table;
-        for (const auto& [key, val] : names_) {
-            names_table.insert(key, val);
-        }
-
-        toml::table root_table;
-        root_table.insert("names", names_table);
-
-        std::ofstream file(filepath_);
-        if (file.is_open()) {
-            file << root_table;
-            spdlog::info("Saved names to {}", filepath_);
-        } else {
-            spdlog::error("Failed to open {} for writing.", filepath_);
-        }
-    }
-
-    std::optional<std::string> get_name(const std::string& index_str) {
-        std::optional<int> decimal_index = parse_index(index_str);
-        if (!decimal_index) {
-            return std::nullopt;
-        }
-        std::string chess_index = to_chess_index(*decimal_index);
-
-        std::lock_guard<std::mutex> lock(mutex_);
-        auto it = names_.find(chess_index);
-        if (it != names_.end()) {
-            return it->second;
-        }
-        return std::nullopt;
-    }
-
-    void set_name(const std::string& index_str, const std::string& name) {
-        std::optional<int> decimal_index = parse_index(index_str);
-        if (!decimal_index) {
-            return;
-        }
-        std::string chess_index = to_chess_index(*decimal_index);
-
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (name.empty()) {
-            names_.erase(chess_index);
-        } else {
-            names_[chess_index] = name;
-        }
-    }
-};
 
 // Helper function to create a scrolling buffer for plots
 struct ScrollingBuffer {
@@ -968,6 +848,15 @@ int main() {
                         // This runs the heavy analysis on the executor without blocking the GUI or the pipeline.
                         executor.silent_async([&]() {
                             analysis_manager.run_correlation_analysis(&stress_tester);
+
+                            // NEW: After analysis, save results to files
+                            analysis_manager.save_correlation_results_to_files(
+                                "correlation_report", // Base filename prefix
+                                [&](int index) { // Lambda function to get name for a given decimal index
+                                    std::string chess_idx = MeasurementNamer::to_chess_index(index);
+                                    return namer.get_name(chess_idx).value_or("");
+                                }
+                            );
                         });
                         spdlog::info("Analysis task submitted.");
                     } else {
@@ -1033,7 +922,25 @@ int main() {
                 ImGui::NewLine();
 
                 // --- Get pre-computed results and render ---
-                auto analysis_results2 = analysis_manager.get_analysis_results();
+                auto analysis_result = analysis_manager.get_analysis_results();
+
+                // --- NEW: Check if a single core is selected for focused coloring ---
+                int single_selected_core_id = -1; // -1: none, -2: multiple, >=0: single core ID
+                if (stress_tester.is_running()) {
+                    int selected_count = 0;
+                    for (int i = 0; i < stress_tester.get_core_count(); ++i) {
+                        if (stress_tester.get_thread_busy_state(i)) {
+                            selected_count++;
+                            single_selected_core_id = i; // Store the latest selected core
+                        }
+                    }
+                    if (selected_count > 1) {
+                        single_selected_core_id = -2; // Mark as multiple selected
+                    } else if (selected_count == 0) {
+                        single_selected_core_id = -1; // Mark as none selected
+                    }
+                }
+                // --- END OF NEW CODE ---
 
                 const int num_columns = 16;
                 if (ImGui::BeginTable("AnalysisGrid", num_columns, ImGuiTableFlags_Borders | ImGuiTableFlags_SizingFixedFit)) {
@@ -1047,24 +954,48 @@ int main() {
 
                     ImGui::TableHeadersRow();
 
-                    for (int i = 0; i < analysis_results2.size(); ++i) {
+                    for (int i = 0; i < analysis_results.size(); ++i) {
                         ImGui::PushID(i);
                         if (i % num_columns == 0) ImGui::TableNextRow();
                         ImGui::TableSetColumnIndex(i % num_columns);
 
-                        const CellStats& stats = analysis_results2[i];
-                        ImVec4 cell_color = ImVec4(0.1f, 0.1f, 0.1f, 1.0f);
+                        const CellStats& stats = analysis_results[i];
+                        ImVec4 cell_color = ImVec4(0.1f, 0.1f, 0.1f, 1.0f); // Default dark color
 
-                        // UPDATED: Color the cell based on the TOP correlated core
-                        if (!stats.top_correlations.empty() && stats.top_correlations[0].correlation_strength > 0.1f) {
-                            const auto& top_corr = stats.top_correlations[0];
-                            ImVec4 base_color = core_colors[top_corr.core_id];
-                            float h, s, v;
-                            ImGui::ColorConvertRGBtoHSV(base_color.x, base_color.y, base_color.z, h, s, v);
-                            // Optionally, scale saturation/value by strength
-                            s *= top_corr.correlation_strength;
-                            ImGui::ColorConvertHSVtoRGB(h, s, v, cell_color.x, cell_color.y, cell_color.z);
+                        // --- MODIFIED: Coloring Logic ---
+                        if (single_selected_core_id >= 0) {
+                            // CASE 1: A single core is selected. Color based on correlation to THAT core.
+                            float correlation_with_selected_core = 0.0f;
+                            // Find the specific correlation info for the selected core
+                            for (const auto& corr : stats.top_correlations) {
+                                if (corr.core_id == single_selected_core_id) {
+                                    correlation_with_selected_core = corr.correlation_strength;
+                                    break;
+                                }
+                            }
+
+                            if (correlation_with_selected_core > 0.01f) {
+                                ImVec4 base_color = core_colors[single_selected_core_id];
+                                float h, s, v;
+                                ImGui::ColorConvertRGBtoHSV(base_color.x, base_color.y, base_color.z, h, s, v);
+                                // Scale saturation by the specific correlation strength
+                                s *= correlation_with_selected_core;
+                                ImGui::ColorConvertHSVtoRGB(h, s, v, cell_color.x, cell_color.y, cell_color.z);
+                            }
+
+                        } else {
+                            // CASE 2: Zero or multiple cores selected. Color based on the TOP correlated core (original behavior).
+                            if (!stats.top_correlations.empty() && stats.top_correlations[0].correlation_strength > 0.1f) {
+                                const auto& top_corr = stats.top_correlations[0];
+                                ImVec4 base_color = core_colors[top_corr.core_id];
+                                float h, s, v;
+                                ImGui::ColorConvertRGBtoHSV(base_color.x, base_color.y, base_color.z, h, s, v);
+                                // Scale saturation/value by strength
+                                s *= top_corr.correlation_strength;
+                                ImGui::ColorConvertHSVtoRGB(h, s, v, cell_color.x, cell_color.y, cell_color.z);
+                            }
                         }
+                        // --- END OF MODIFIED LOGIC ---
 
                         ImGui::TableSetBgColor(ImGuiTableBgTarget_CellBg, ImGui::ColorConvertFloat4ToU32(cell_color));
                         bool is_interesting = stats.get_stddev() > 0.00001f;

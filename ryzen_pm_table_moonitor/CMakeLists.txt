@@ -20,6 +20,7 @@ add_executable(pm_monitor
         src/main.cpp
         src/pm_table_reader.cpp
         src/analysis_manager.cpp
+        src/measurement_namer.cpp
 )
 
 target_link_libraries(pm_monitor PRIVATE

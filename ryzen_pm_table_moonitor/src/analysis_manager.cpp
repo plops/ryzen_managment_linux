@@ -1,8 +1,13 @@
 #include "analysis_manager.hpp"
+#include "measurement_namer.hpp" // NEW: To access MeasurementNamer::to_chess_index
 #include <spdlog/spdlog.h>
 #include <numeric>
-#include <algorithm> // For std::sort
+#include <algorithm> // For std::sort and std::find_if
 #include <thread>    // For std::this_thread::sleep_for
+#include <fstream>   // NEW: For file output
+#include <iomanip>   // NEW: For std::put_time and std::setprecision
+#include <chrono>    // NEW: For timestamps
+#include <vector>    // NEW: For collecting strengths for statistics
 
 // This is the "hot path" - it runs for every sample from the PM Table.
 void AnalysisManager::process_data_packet(const TimestampedData& current_data) {
@@ -29,137 +34,152 @@ struct SingleCoreCorrelationResult {
     }
 };
 
-
-// REWRITTEN to avoid holding the lock during the long analysis process.
+/**
+ * @brief Final version of the analysis function.
+ *
+ * This version makes the correlation results persistent and cumulative throughout a
+ * single analysis run.
+ *
+ * Fix:
+ * A new initialization step has been added at the beginning. Before the core-by-core
+ * analysis begins, it clears all correlation data from the previous run. This
+ * ensures that as each core's new results are calculated, they are added to a clean
+ * slate and will persist in the UI until the user clicks "Run Analysis" again.
+ *
+ * @brief MODIFIED: Real-time Correlation Update.
+ *
+ * The active measurement phase has been changed from a single long sleep to a loop.
+ * This loop periodically recalculates the correlation based on the data gathered so far
+ * and updates the shared analysis_results_. This allows the GUI thread to render
+ * the color changes in real-time as the measurement progresses.
+ */
 void AnalysisManager::run_correlation_analysis(StressTester* stress_tester) {
-    if (!stress_tester || !stress_tester->is_running()) {
-        spdlog::warn("Analysis skipped: stress tester is not running.");
-        return;
-    }
+    spdlog::info("Starting REAL-TIME correlation analysis...");
+    const int core_count = stress_tester->get_core_count();
+    const auto baseline_duration = std::chrono::milliseconds(1500);
+    const auto active_duration = std::chrono::seconds(2);
+    // How often to update the UI during the active measurement phase.
+    const auto update_interval = std::chrono::milliseconds(1000 / 60); // Approx 60 Hz
 
-    // --- Step 1: Create a local copy of the data to work on ---
-    // This minimizes the time we hold the lock, preventing GUI freezes.
-    std::vector<CellStats> local_analysis_results;
+
+    // --- NEW: Initialization Step ---
+    // Before starting the measurements, clear all correlation results from any previous run.
+    // This ensures that the table starts empty and the new results are cumulative.
     {
         std::lock_guard<std::mutex> lock(results_mutex_);
-        if (analysis_results_.empty()) {
-            spdlog::warn("Analysis skipped: no data yet.");
-            return;
+        spdlog::info("Clearing all previous correlation data.");
+        for (auto& result : analysis_results_) {
+            result.top_correlations.clear();
         }
-        local_analysis_results = analysis_results_;
-    } // The lock is released here.
+    }
+    // The UI will now show a blank (uncolored) grid, ready for the new results.
 
-    spdlog::info("Starting sequential correlation analysis to avoid crosstalk...");
 
-    const unsigned int num_cores = stress_tester->get_core_count();
-    const auto& periods = stress_tester->get_periods();
-
-    // Save the original stress state to restore it later.
-    std::vector<bool> original_stress_states;
-    original_stress_states.reserve(num_cores);
-    for (unsigned int i = 0; i < num_cores; ++i) {
-        original_stress_states.push_back(stress_tester->get_thread_busy_state(i));
+    // Ensure all stress threads are initially off before we begin.
+    for (int i = 0; i < core_count; ++i) {
+        stress_tester->set_thread_busy_state(i, false);
     }
 
-    // This vector will hold all results before they are sorted and trimmed.
-    // Access via: results_per_cell[cell_index]
-    std::vector<std::vector<SingleCoreCorrelationResult>> results_per_cell(local_analysis_results.size());
+    // Loop through each core to stress it individually.
+    for (int stressed_core_id = 0; stressed_core_id < core_count; ++stressed_core_id) {
+        spdlog::info("Analysis: Measuring core {}...", stressed_core_id);
 
-    // --- Step 2: Main loop, runs WITHOUT holding the lock ---
-    for (unsigned int core_to_stress = 0; core_to_stress < num_cores; ++core_to_stress) {
-        spdlog::info("Stressing ONLY core {}/{} to gather clean data...", core_to_stress, num_cores - 1);
+        // --- Step 1: Baseline Measurement (Core Idle) ---
+        {
+            std::lock_guard<std::mutex> lock(results_mutex_);
+            for (auto& result : analysis_results_) result.history.clear();
+        }
+        std::this_thread::sleep_for(baseline_duration);
 
-        // Set the stress state: only the current core is active.
-        for (unsigned int i = 0; i < num_cores; ++i) {
-            stress_tester->set_thread_busy_state(i, i == core_to_stress);
+        std::vector<float> baseline_stddevs(analysis_results_.size());
+        {
+            std::lock_guard<std::mutex> lock(results_mutex_);
+            for (size_t i = 0; i < analysis_results_.size(); ++i) {
+                baseline_stddevs[i] = analysis_results_[i].get_stddev();
+            }
         }
 
-        // CRITICAL: Wait for the history buffers in CellStats to be populated
-        // with data generated *only* during this single-core stress period.
-        std::this_thread::sleep_for(std::chrono::milliseconds(2500));
+        // --- Step 2: Active Measurement (Core Stressed) ---
+        stress_tester->set_thread_busy_state(stressed_core_id, true);
+        {
+            std::lock_guard<std::mutex> lock(results_mutex_);
+            for (auto& result : analysis_results_) result.history.clear();
+        }
 
-        // Now that the history is "clean", calculate correlation for all cells.
-        // We need to re-fetch the analysis results from the manager to get the
-        // most up-to-date history buffers filled during our sleep.
-        std::vector<CellStats> current_stats_snapshot = this->get_analysis_results();
+        // --- REAL-TIME UPDATE LOOP ---
+        // Instead of one long sleep, we loop and update the results frequently.
+        auto measurement_start_time = std::chrono::steady_clock::now();
+        while (std::chrono::steady_clock::now() - measurement_start_time < active_duration) {
+            // Wait for a short interval before the next update.
+            std::this_thread::sleep_for(update_interval);
 
-        const auto stress_start_time = stress_tester->get_start_time();
-        const long long stress_start_time_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(stress_start_time.time_since_epoch()).count();
-        const long long period_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(periods[core_to_stress]).count();
-        const long long work_duration_ns = period_ns / 3;
-
-        for (size_t i = 0; i < local_analysis_results.size(); ++i) {
-            if (i >= current_stats_snapshot.size() || current_stats_snapshot[i].history.empty()) continue;
-
-            // Use the up-to-date history from the snapshot
-            const auto& cell_history = current_stats_snapshot[i].history;
-            // But use the min/max from our consistent local copy
-            const auto& local_cell = local_analysis_results[i];
-
-            std::vector<float> on_state_samples;
-            std::vector<float> off_state_samples;
-
-            for (const auto& sample : cell_history) {
-                long long time_since_start = sample.timestamp_ns - stress_start_time_ns;
-                if (time_since_start < 0) continue;
-
-                long long phase_in_period = time_since_start % period_ns;
-                if (phase_in_period < work_duration_ns) {
-                    on_state_samples.push_back(sample.value);
-                } else {
-                    off_state_samples.push_back(sample.value);
+            // Lock data, calculate correlation based on samples gathered *so far*, and update.
+            std::lock_guard<std::mutex> lock(results_mutex_);
+            for (size_t i = 0; i < analysis_results_.size(); ++i) {
+                // Get stddev from the history that has been accumulating.
+                float active = analysis_results_[i].get_stddev();
+                float baseline = baseline_stddevs[i];
+                float correlation_strength = 0.0f;
+                float denominator = (active + baseline + 1e-9f);
+                if (denominator > 0) {
+                    correlation_strength = std::max(0.0f, (active - baseline) / denominator);
                 }
+                correlation_strength = sqrtf(correlation_strength);
+
+                // This function updates the list that the GUI thread is reading from.
+                update_or_insert_correlation(analysis_results_[i], stressed_core_id, correlation_strength);
             }
-
-            if (on_state_samples.empty() || off_state_samples.empty()) continue;
-
-            double on_mean = std::accumulate(on_state_samples.begin(), on_state_samples.end(), 0.0) / on_state_samples.size();
-            double off_mean = std::accumulate(off_state_samples.begin(), off_state_samples.end(), 0.0) / off_state_samples.size();
-            double strength = std::abs(on_mean - off_mean);
-
-            // Normalize strength based on the signal's observed range from our local copy
-            double range = local_cell.max_val - local_cell.min_val;
-            double normalized_strength = 0.0;
-            if (range > 1e-6) {
-                normalized_strength = std::min(1.0, strength / range);
-            }
-
-            results_per_cell[i].push_back({(int)core_to_stress, normalized_strength, on_state_samples.size(), off_state_samples.size()});
         }
+
+        stress_tester->set_thread_busy_state(stressed_core_id, false);
+
+        // --- Step 3 is now integrated into the loop above ---
+        spdlog::info("Analysis: Finished real-time measurement for core {}.", stressed_core_id);
+
     }
 
-    // --- Step 3: Post-processing and updating the local copy ---
-    spdlog::info("Aggregating and sorting results from all cores...");
-    for (size_t i = 0; i < local_analysis_results.size(); ++i) {
-        auto& cell = local_analysis_results[i];
-        auto& all_core_results_for_cell = results_per_cell[i];
+    // --- Step 4: Cleanup ---
+    for (int i = 0; i < core_count; ++i) {
+        stress_tester->set_thread_busy_state(i, true); // Restore all cores to busy by default
+    }
+    spdlog::info("Full correlation analysis complete. All results are now displayed.");
+}
+/**
+ * @brief Helper to update the correlation list for a single cell.
+ *
+ * This function finds the correlation entry for the given core_id in the cell's
+ * top_correlations list. If it exists, it updates the strength. If not, it adds
+ * a new entry. It then sorts the list and truncates it to keep only the top results.
+ *
+ * @param stats The CellStats object for a single cell in the grid.
+ * @param core_id The core that was just measured.
+ * @param new_strength The newly calculated correlation strength.
+ */
+void AnalysisManager::update_or_insert_correlation(CellStats& stats, int core_id, float new_strength) {
+    // Find if a correlation for this core already exists.
+    auto it = std::find_if(stats.top_correlations.begin(), stats.top_correlations.end(),
+        [core_id](const CoreCorrelationInfo& info) {
+            return info.core_id == core_id;
+        });
 
-        std::sort(all_core_results_for_cell.begin(), all_core_results_for_cell.end());
-
-        cell.top_correlations.clear();
-        for (size_t j = 0; j < 4 && j < all_core_results_for_cell.size(); ++j) {
-            const auto& result = all_core_results_for_cell[j];
-            const double TARGET_SAMPLES_PER_STATE = 30.0;
-            size_t min_samples = std::min(result.on_samples, result.off_samples);
-            double confidence_factor = std::min(1.0, min_samples / TARGET_SAMPLES_PER_STATE);
-            cell.top_correlations.push_back({result.core_id, static_cast<float>(result.correlation_strength), static_cast<float>(confidence_factor)});
-        }
+    if (it != stats.top_correlations.end()) {
+        // It exists, so update it.
+        it->correlation_strength = new_strength;
+    } else {
+        // It doesn't exist, so add it.
+        stats.top_correlations.push_back({core_id, new_strength, 1.0f /* quality */});
     }
 
-    // Restore the original stress tester state.
-    spdlog::info("Restoring original stress tester state.");
-    for (unsigned int i = 0; i < num_cores; ++i) {
-        stress_tester->set_thread_busy_state(i, original_stress_states[i]);
+    // Sort the list by strength in descending order.
+    std::sort(stats.top_correlations.begin(), stats.top_correlations.end(),
+        [](const CoreCorrelationInfo& a, const CoreCorrelationInfo& b) {
+            return a.correlation_strength > b.correlation_strength;
+        });
+
+    // Keep only the top 4 correlations.
+    if (stats.top_correlations.size() > 4) {
+        stats.top_correlations.resize(4);
     }
-
-    // --- Step 4: Publish the final results ---
-    // Lock the mutex one last time to swap in the new results.
-    {
-        std::lock_guard<std::mutex> lock(results_mutex_);
-        analysis_results_ = local_analysis_results;
-    } // Lock is released.
-
-    spdlog::info("Sequential correlation analysis complete.");
 }
 
 void AnalysisManager::reset_stats() {
@@ -173,4 +193,116 @@ void AnalysisManager::reset_stats() {
 std::vector<CellStats> AnalysisManager::get_analysis_results() {
     std::lock_guard<std::mutex> lock(results_mutex_);
     return analysis_results_;
+}
+
+// NEW: Implementation of the save function
+void AnalysisManager::save_correlation_results_to_files(
+    const std::string& base_filename_prefix,
+    std::function<std::string(int index)> get_name_func
+) {
+    std::lock_guard<std::mutex> lock(results_mutex_); // Lock access to analysis_results_
+
+    if (analysis_results_.empty()) {
+        spdlog::warn("No analysis results to save.");
+        return;
+    }
+
+    // Generate a timestamp for the filenames
+    auto now = std::chrono::system_clock::now();
+    std::time_t now_c = std::chrono::system_clock::to_time_t(now);
+    std::stringstream ss;
+    ss << std::put_time(std::localtime(&now_c), "%Y%m%d_%H%M%S");
+    std::string timestamp_str = ss.str();
+
+    std::string table_filename = base_filename_prefix + "_table_" + timestamp_str + ".csv";
+    std::string summary_filename = base_filename_prefix + "_summary_" + timestamp_str + ".csv";
+
+    // --- Open Files ---
+    std::ofstream table_file(table_filename);
+    if (!table_file.is_open()) {
+        spdlog::error("Failed to open file for correlation table: {}", table_filename);
+        return;
+    }
+    std::ofstream summary_file(summary_filename);
+    if (!summary_file.is_open()) {
+        spdlog::error("Failed to open file for correlation summary: {}", summary_filename);
+        table_file.close(); // Close the first file if the second fails
+        return;
+    }
+
+    // --- Write Table Header ---
+    table_file << "Index,Chess Index,Name,Live Value,Min Value,Max Value,Mean Value,StdDev Value";
+    const int max_correlations_to_report = 4; // Same as in update_or_insert_correlation
+    for (int i = 1; i <= max_correlations_to_report; ++i) {
+        table_file << ",Top" << i << " Core ID"
+                   << ",Top" << i << " Strength"
+                   << ",Top" << i << " Quality";
+    }
+    table_file << "\n";
+
+    // --- Collect all correlation strengths for overall statistics ---
+    std::vector<float> all_correlation_strengths;
+    all_correlation_strengths.reserve(analysis_results_.size() * max_correlations_to_report); // Pre-allocate
+
+    // --- Write Table Data and collect strengths ---
+    for (size_t i = 0; i < analysis_results_.size(); ++i) {
+        const auto& stats = analysis_results_[i];
+        std::string name = get_name_func(static_cast<int>(i));
+
+        table_file << i << ","
+                   << MeasurementNamer::to_chess_index(static_cast<int>(i)) << ","
+                   << "\"" << name << "\"," // Enclose name in quotes to handle commas
+                   << std::fixed << std::setprecision(3) << stats.current_val << ","
+                   << std::fixed << std::setprecision(3) << stats.min_val << ","
+                   << std::fixed << std::setprecision(3) << stats.max_val << ","
+                   << std::fixed << std::setprecision(3) << stats.mean << ","
+                   << std::fixed << std::setprecision(3) << stats.get_stddev();
+
+        for (int j = 0; j < max_correlations_to_report; ++j) {
+            if (j < stats.top_correlations.size()) {
+                const auto& corr = stats.top_correlations[j];
+                table_file << "," << corr.core_id
+                           << "," << std::fixed << std::setprecision(3) << corr.correlation_strength
+                           << "," << std::fixed << std::setprecision(3) << corr.correlation_quality;
+                all_correlation_strengths.push_back(corr.correlation_strength);
+            } else {
+                table_file << ",N/A,N/A,N/A"; // Placeholder for missing correlations
+            }
+        }
+        table_file << "\n";
+    }
+
+    table_file.close();
+    spdlog::info("Correlation table saved to {}", table_filename);
+
+    // --- Write Summary Statistics ---
+    if (!all_correlation_strengths.empty()) {
+        std::sort(all_correlation_strengths.begin(), all_correlation_strengths.end());
+
+        float min_strength = all_correlation_strengths.front();
+        float max_strength = all_correlation_strengths.back();
+
+        double sum_strength = std::accumulate(all_correlation_strengths.begin(), all_correlation_strengths.end(), 0.0);
+        double mean_strength = sum_strength / all_correlation_strengths.size();
+
+        float median_strength;
+        size_t mid = all_correlation_strengths.size() / 2;
+        if (all_correlation_strengths.size() % 2 == 0) {
+            median_strength = (all_correlation_strengths[mid - 1] + all_correlation_strengths[mid]) / 2.0f;
+        } else {
+            median_strength = all_correlation_strengths[mid];
+        }
+
+        summary_file << "Statistic,Value\n";
+        summary_file << "Min Strength," << std::fixed << std::setprecision(3) << min_strength << "\n";
+        summary_file << "Max Strength," << std::fixed << std::setprecision(3) << max_strength << "\n";
+        summary_file << "Mean Strength," << std::fixed << std::setprecision(3) << mean_strength << "\n";
+        summary_file << "Median Strength," << std::fixed << std::setprecision(3) << median_strength << "\n";
+
+    } else {
+        summary_file << "No correlation strengths recorded.\n";
+    }
+
+    summary_file.close();
+    spdlog::info("Correlation summary saved to {}", summary_filename);
 }
