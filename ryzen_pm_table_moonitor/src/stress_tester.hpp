@@ -3,7 +3,6 @@
 #include <vector>
 #include <thread>
 #include <atomic>
-#include <vector>
 #include <spdlog/spdlog.h>
 #include <chrono>
 
@@ -100,12 +99,12 @@ public:
         }
     }
 
-    bool is_running() const { return is_running_; }
-    const std::vector<std::chrono::milliseconds>& get_periods() const { return periods_ms_; }
-    unsigned int get_core_count() const { return num_cores_; }
-    std::chrono::steady_clock::time_point get_start_time() const { return start_time_; }
+    [[nodiscard]] bool is_running() const { return is_running_; }
+    [[nodiscard]] const std::vector<std::chrono::milliseconds>& get_periods() const { return periods_ms_; }
+    [[nodiscard]] unsigned int get_core_count() const { return num_cores_; }
+    [[nodiscard]] std::chrono::steady_clock::time_point get_start_time() const { return start_time_; }
     // Getter for the GUI to read the persistent state for its checkboxes.
-    bool get_thread_busy_state(int core_id) const {
+    [[nodiscard]] bool get_thread_busy_state(int core_id) const {
         if (core_id >= 0 && core_id < num_cores_) {
             return thread_busy_states_[core_id];
         }
@@ -152,7 +151,7 @@ private:
                 }
             }
             if (is_prime) {
-                primes.push_back(std::chrono::milliseconds(num*10));
+                primes.emplace_back(num*3);
             }
             num += 2;
         }

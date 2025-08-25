@@ -61,9 +61,9 @@ struct CellStats {
         }
     }
 
-    float get_stddev() const {
+    [[nodiscard]] float get_stddev() const {
         if (count < 2) return 0.0f;
-        return std::sqrt(m2 / (count - 1));
+        return std::sqrtf(m2 / (count - 1));
     }
 
     void reset() {

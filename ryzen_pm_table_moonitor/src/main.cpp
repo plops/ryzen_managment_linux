@@ -49,13 +49,13 @@ private:
             return std::nullopt;
         }
         char col_char = std::toupper(chess_index[0]);
-        if (col_char < 'A' || col_char > 'H') {
+        if (col_char < 'A' || col_char > 'P') {
             return std::nullopt;
         }
         int col = col_char - 'A';
         try {
             int row = std::stoi(chess_index.substr(1));
-            return row * 8 + col;
+            return row * 16 + col;
         } catch (const std::exception&) {
             return std::nullopt;
         }
@@ -69,8 +69,8 @@ public:
     // Convert an integer index to its chess notation (e.g., 263 -> "H32")
     static std::string to_chess_index(int index) {
         if (index < 0) return "Invalid";
-        char col = 'A' + (index % 8);
-        int row = (index / 8);
+        char col = 'A' + (index % 16);
+        int row = (index / 16);
         return fmt::format("{}{}", col, row);
     }
 
@@ -226,8 +226,8 @@ void DrawStructInTable(const char *table_id, const T &data) {
 
 // Helper function to generate distinct colors for the cores
 ImVec4 generate_color_for_core(int core_id) {
-    float hue = (float)core_id * 0.61803398875f; // Golden ratio
-    hue = fmod(hue, 1.0f);
+    float hue = static_cast<float>(core_id) * 0.61803398875f; // Golden ratio
+    hue = fmodf(hue, 1.0f);
     ImVec4 color;
     ImGui::ColorConvertHSVtoRGB(hue, 0.85f, 0.95f, color.x, color.y, color.z);
     color.w = 1.0f;
@@ -269,8 +269,7 @@ void RenderTextWithOutline(const char* text, const ImVec4& text_color)
 // UPDATED with an 'is_editable' flag to differentiate between hover tooltips and pinned windows.
 void RenderCellDetails(int index, const CellStats& stats, const StressTester& stress_tester, const std::vector<ImVec4>& core_colors, MeasurementNamer& namer, bool is_editable) {
     std::string chess_index = MeasurementNamer::to_chess_index(index);
-    ImGui::Text("Index: %5d, Bytes: %5d .. %5d", index, index * 4, index * 4 + 3);
-    ImGui::Text("Chess Index: %s", chess_index.c_str());
+
 
     // --- UPDATED: Display/Edit Measurement Name Conditionally ---
     std::string current_name = namer.get_name(chess_index).value_or("");
@@ -300,7 +299,8 @@ void RenderCellDetails(int index, const CellStats& stats, const StressTester& st
             ImGui::LabelText("Name", "%s", current_name.c_str());
         }
     }
-
+    ImGui::Text("Index: %5d, Bytes: %5d .. %5d", index, index * 4, index * 4 + 3);
+    ImGui::Text("Chess Index: %s", chess_index.c_str());
 
     ImGui::Separator();
     ImGui::Text("Live: %8.3f", stats.current_val);
@@ -340,7 +340,7 @@ void RenderCellDetails(int index, const CellStats& stats, const StressTester& st
         values.reserve(stats.history.size());
         long long first_ts = stats.history.front().timestamp_ns;
         for (const auto& sample : stats.history) {
-            timestamps.push_back((float)(sample.timestamp_ns - first_ts) / 1e9f);
+            timestamps.push_back(static_cast<float>(sample.timestamp_ns - first_ts) / 1e9f);
             values.push_back(sample.value);
         }
 
@@ -357,7 +357,7 @@ void RenderCellDetails(int index, const CellStats& stats, const StressTester& st
 
             // Create a copy for sorting to calculate percentiles
             auto sorted_values = values;
-            std::sort(sorted_values.begin(), sorted_values.end());
+            std::ranges::sort(sorted_values);
 
             // Calculate 5th and 95th percentile indices
             size_t p10_idx = sorted_values.size() * 0.05;
@@ -384,7 +384,7 @@ void RenderCellDetails(int index, const CellStats& stats, const StressTester& st
 
             // --- Phase 2: Plot all data ---
             ImPlot::SetAxis(ImAxis_Y1);
-            ImPlot::PlotLine("Value", timestamps.data(), values.data(), (int)timestamps.size());
+            ImPlot::PlotLine("Value", timestamps.data(), values.data(), static_cast<int>(timestamps.size()));
 
             if (has_dominant_core) {
                 std::vector<float> core_state_values;
@@ -411,7 +411,7 @@ void RenderCellDetails(int index, const CellStats& stats, const StressTester& st
                 }
 
                 ImPlot::SetAxis(ImAxis_Y2);
-                ImPlot::PlotLine("Core State", timestamps.data(), core_state_values.data(), (int)timestamps.size());
+                ImPlot::PlotLine("Core State", timestamps.data(), core_state_values.data(), static_cast<int>(timestamps.size()));
             }
             ImPlot::EndPlot();
         }
@@ -433,7 +433,7 @@ public:
             // --- ENABLE REAL-TIME SCHEDULING (from your old code) ---
             #if defined(__linux__)
             const int policy = SCHED_FIFO;
-            sched_param params;
+            sched_param params{};
             // Set a high priority (1-99 for SCHED_FIFO).
             params.sched_priority = 80;
 
@@ -594,7 +594,7 @@ int main() {
         }},
 
         // Stage 2: Consumer (READS from the shared buffer and processes data)
-        tf::Pipe{tf::PipeType::PARALLEL, [&](tf::Pipeflow& pf) {
+        tf::Pipe{tf::PipeType::PARALLEL, [&](const tf::Pipeflow& pf) {
             // Get a reference to the data produced by stage 1 on the same line.
             const TimestampedData& data = data_buffer[pf.line()];
 
@@ -1033,7 +1033,7 @@ int main() {
                 ImGui::NewLine();
 
                 // --- Get pre-computed results and render ---
-                auto analysis_results = analysis_manager.get_analysis_results();
+                auto analysis_results2 = analysis_manager.get_analysis_results();
 
                 const int num_columns = 16;
                 if (ImGui::BeginTable("AnalysisGrid", num_columns, ImGuiTableFlags_Borders | ImGuiTableFlags_SizingFixedFit)) {
@@ -1047,12 +1047,12 @@ int main() {
 
                     ImGui::TableHeadersRow();
 
-                    for (int i = 0; i < analysis_results.size(); ++i) {
+                    for (int i = 0; i < analysis_results2.size(); ++i) {
                         ImGui::PushID(i);
                         if (i % num_columns == 0) ImGui::TableNextRow();
                         ImGui::TableSetColumnIndex(i % num_columns);
 
-                        const CellStats& stats = analysis_results[i];
+                        const CellStats& stats = analysis_results2[i];
                         ImVec4 cell_color = ImVec4(0.1f, 0.1f, 0.1f, 1.0f);
 
                         // UPDATED: Color the cell based on the TOP correlated core
@@ -1068,18 +1068,29 @@ int main() {
 
                         ImGui::TableSetBgColor(ImGuiTableBgTarget_CellBg, ImGui::ColorConvertFloat4ToU32(cell_color));
                         bool is_interesting = stats.get_stddev() > 0.00001f;
+                        std::string chess_index = MeasurementNamer::to_chess_index(i);
+                        std::string current_name = namer.get_name(chess_index).value_or("");
+                        bool has_name = !current_name.empty();
+
                         ImVec4 text_color = is_interesting ? ImVec4(1.0f, 1.0f, 0.0f, 1.0f)  // Yellow for interesting
                                        : ImGui::GetStyle().Colors[ImGuiCol_Text]; // Default text color otherwise
-                        if (is_interesting) {
+                        if (has_name) {
+                            text_color.y=1.0f;
+                        } else {
+                            text_color.y=0.0f;
+                        }
+
+                        // if (is_interesting) {
                             std::string formatted_text = fmt::format("{:8.2f}", stats.current_val);
                             RenderTextWithOutline(formatted_text.c_str(), text_color);
-                        } else {
-                            ImGui::Text("%8.2f", stats.current_val);
-                        }
+                        // }
+                        // else {
+                        //     ImGui::Text("%8.2f", stats.current_val);
+                        // }
                         //  Add the pinning logic on right-click
                         if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
                             // To prevent adding the same window multiple times, check if it already exists
-                            if (std::find(pinned_cell_indices.begin(), pinned_cell_indices.end(), i) == pinned_cell_indices.end()) {
+                            if (std::ranges::find(pinned_cell_indices, i) == pinned_cell_indices.end()) {
                                 pinned_cell_indices.push_back(i);
                             }
                         }

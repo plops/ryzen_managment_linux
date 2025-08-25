@@ -4,7 +4,6 @@
 #include "stress_tester.hpp"
 #include <vector>
 #include <mutex>
-#include <atomic> // Keep atomic flags for GUI-triggered actions
 
 // Struct to hold a vector of raw data with its capture timestamp
 struct TimestampedData {
