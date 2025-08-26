@@ -135,6 +135,67 @@ def parse_log_file(filepath: Path, fast: bool = False) -> pd.DataFrame:
     return df
 
 
+
+
+log_path = Path(LOG_FILE_PATH)
+print(f"Attempting to parse log file: {log_path.resolve()}")
+data_df = parse_log_file(log_path, False)
+print(f"Successfully parsed {len(data_df)} records.")
+# --- Jitter Calculation ---
+# Calculate the difference between consecutive timestamps in milliseconds,
+# then subtract 1 to center the ideal interval (1ms) at 0.
+jitter = np.diff(data_df.index).astype(float) * 1e-6 - 1
+std = np.std(jitter)
+med = np.median(jitter)
+p99 = np.percentile(np.abs(jitter), 99)
+mn = np.mean(jitter)
+mi = np.min(jitter)
+ma = np.max(jitter)
+title = f"min={mi:.2g}ms mean={mn:.2g}ms std={std:.2g}ms med={med:.2g}ms p99={p99:.2g}ms max={ma:.2g} n={len(jitter)}"
+
+# --- CORRECTED HISTOGRAM BIN COMPUTATION ---
+# The goal is to create logarithmic-like bins that are symmetric around 0.
+# We want high resolution (narrow bins) close to 0 and lower resolution (wider bins) further away.
+
+# 1. Determine the overall range by finding the maximum absolute jitter value.
+#    We add a small epsilon to avoid issues if max is exactly 0.
+limit = max(abs(mi), abs(ma)) + 1e-9
+
+# 2. Define the starting point for the logarithmic scale. This will be the edge
+#    of our finest-resolution bin closest to zero. A smaller value gives
+#    higher resolution near the center.
+start_val = 0.001  # ms
+
+# 3. Generate a logarithmic sequence for the positive side of the histogram.
+#    We create 500 bins from our small starting value up to the limit.
+positive_bins = np.logspace(np.log10(start_val), np.log10(limit), num=500)
+
+# 4. Create the negative side by negating and flipping the positive bins.
+#    This ensures the bins are perfectly symmetric around zero.
+negative_bins = -np.flip(positive_bins)
+
+# 5. Combine the negative and positive bins. The space between -start_val and
+#    +start_val will form the central bin of the histogram.
+bins = np.concatenate((negative_bins, positive_bins))
+
+# --- Plotting ---
+plt.figure(figsize=(12, 7))
+plt.hist(jitter, bins=bins, log=True)
+plt.xlabel("Jitter (Deviation from 1ms Interval) [ms]")
+plt.ylabel("Count (Log Scale)")
+plt.title(title)
+plt.grid(True, which="both", linestyle='--', linewidth=0.5)
+
+now = datetime.datetime.now()
+now_str = now.strftime("%Y-%m-%d_%H-%M-%S")
+output_filename = f"jitter_{now_str}.png"
+plt.savefig(output_filename)
+print(f"Saved jitter histogram to {output_filename}")
+print(title)
+# To display the plot in an interactive environment
+# plt.show()
+
+
 def plot_data(df: pd.DataFrame):
     """Generates and displays plots from the parsed data."""
     if df.empty:
@@ -198,47 +259,3 @@ def plot_data(df: pd.DataFrame):
     plt.show()
     plt.savefig("o.png")
 
-    # def main():
-    #     """Main function to run the script."""
-    #     try:
-    #         log_path = Path(LOG_FILE_PATH)
-    #         print(f"Attempting to parse log file: {log_path.resolve()}")
-    #         data_df = parse_log_file(log_path)
-    #         print(f"Successfully parsed {len(data_df)} records.")
-    #
-    #         if not data_df.empty:
-    #             print("\nDisplaying first 5 rows of data:")
-    #             print(data_df.head())
-    #             plot_data(data_df)
-    #         else:
-    #             print("No data was parsed from the log file.")
-    #
-    #     except FileNotFoundError as e:
-    #         print(f"Error: {e}")
-    #     except Exception as e:
-    #         print(f"An unexpected error occurred: {e}")
-    #
-    # if __name__ == "__main__":
-    #     main()
-
-
-log_path = Path(LOG_FILE_PATH)
-print(f"Attempting to parse log file: {log_path.resolve()}")
-data_df = parse_log_file(log_path, False)
-print(f"Successfully parsed {len(data_df)} records.")
-
-jitter = np.diff(data_df.index).astype(float) * 1e-6 - 1
-std = np.std(jitter)
-med = np.median(jitter)
-p99 = np.percentile(np.abs(jitter), 99)
-mn = np.mean(jitter)
-mi = np.min(jitter)
-ma = np.max(jitter)
-title = f"min={mi:.2g}ms mean={mn:.2g}ms std={std:.2g}ms med={med:.2g}ms p99={p99:.2g}ms max={ma:.2g} n={len(jitter)}"
-plt.hist(jitter, bins=np.linspace(-1, 4, 200), log=True)
-plt.xlabel("time [ms]")
-plt.title(title)
-now = datetime.datetime.now()
-now_str = now.isoformat()
-plt.savefig(f"jitter_{now_str}.png")
-print(title)
