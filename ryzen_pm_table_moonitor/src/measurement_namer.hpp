@@ -49,8 +49,8 @@ public:
     // Convert an integer index (0-indexed) to its chess notation (e.g., 0 -> "A0", 8 -> "A1")
     static std::string to_chess_index(int index) {
         if (index < 0) return "Invalid";
-        char col = 'A' + (index % 8);
-        int row = (index / 8);
+        char col = 'A' + (index % 16);
+        int row = (index / 16);
         return fmt::format("{}{}", col, row);
     }
 
@@ -74,6 +74,6 @@ public:
 
     void load_from_file();
     void save_to_file();
-    std::optional<std::string> get_name(const std::string& chess_index_str);
-    void set_name(const std::string& chess_index_str, const std::string& name);
+    std::optional<std::string> get_name(int index);
+    void set_name(int index, const std::string& name);
 };

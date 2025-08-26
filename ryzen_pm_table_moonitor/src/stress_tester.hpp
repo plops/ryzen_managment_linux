@@ -18,12 +18,12 @@ inline bool set_thread_affinity(std::thread& thread, int core_id) {
     CPU_SET(core_id, &cpuset);
     int rc = pthread_setaffinity_np(thread.native_handle(), sizeof(cpu_set_t), &cpuset);
     if (rc != 0) {
-        spdlog::error("Error calling pthread_setaffinity_np: {}", rc);
+        SPDLOG_ERROR("Error calling pthread_setaffinity_np: {}", rc);
         return false;
     }
     return true;
 #else
-    spdlog::warn("Thread affinity is only supported on Linux.");
+    SPDLOG_WARN("Thread affinity is only supported on Linux.");
     return false;
 #endif
 }
@@ -47,7 +47,7 @@ public:
         if (is_running_) {
             return;
         }
-        spdlog::info("Starting stress threads on {} cores...", num_cores_);
+        SPDLOG_INFO("Starting stress threads on {} cores...", num_cores_);
         start_time_ = std::chrono::steady_clock::now(); // Record start time
         is_running_ = true;
         stop_flags_.resize(num_cores_);
@@ -61,7 +61,7 @@ public:
             // Pass the new "is busy" flag to the worker
             threads_[i] = std::thread(&StressTester::stress_worker, this, i, periods_ms_[i], std::ref(*stop_flags_[i]), std::ref(*thread_is_actually_busy_flags_[i]));
             set_thread_affinity(threads_[i], i);
-            spdlog::info("  - Core {} started with period {}ms", i, periods_ms_[i].count());
+            SPDLOG_INFO("  - Core {} started with period {}ms", i, periods_ms_[i].count());
         }
     }
 
@@ -69,7 +69,7 @@ public:
         if (!is_running_) {
             return;
         }
-        spdlog::info("Stopping stress threads...");
+        SPDLOG_INFO("Stopping stress threads...");
         for (int i = 0; i < num_cores_; ++i) {
             if (stop_flags_[i]) {
                 stop_flags_[i]->store(true);
@@ -84,7 +84,7 @@ public:
         stop_flags_.clear();
         thread_is_actually_busy_flags_.clear(); // Clear the live flags
         is_running_ = false;
-        spdlog::info("All stress threads stopped.");
+        SPDLOG_INFO("All stress threads stopped.");
     }
 
     // Method for the GUI to change the busy state of a thread.
@@ -151,7 +151,7 @@ private:
                 }
             }
             if (is_prime) {
-                primes.push_back(std::chrono::milliseconds(num*2));
+                primes.push_back(std::chrono::milliseconds(num*10));
             }
             num += 2;
         }

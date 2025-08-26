@@ -17,12 +17,12 @@ void MeasurementNamer::load_from_file() {
                     names_[std::string(key)] = val.as_string()->get();
                 }
             }
-            spdlog::info("Successfully loaded {} names from {}", names_.size(), filepath_);
+            SPDLOG_INFO("Successfully loaded {} names from {}", names_.size(), filepath_);
         }
     } catch (const toml::parse_error& err) {
-        spdlog::warn("Could not load names file '{}': {}. A new one will be created on save.", filepath_, err.description());
+        SPDLOG_WARN("Could not load names file '{}': {}. A new one will be created on save.", filepath_, err.description());
     } catch (const std::exception& e) {
-        spdlog::error("Error loading names file '{}': {}", filepath_, e.what());
+        SPDLOG_ERROR("Error loading names file '{}': {}", filepath_, e.what());
     }
 }
 
@@ -39,13 +39,14 @@ void MeasurementNamer::save_to_file() {
     std::ofstream file(filepath_);
     if (file.is_open()) {
         file << root_table;
-        spdlog::info("Saved names to {}", filepath_);
+        SPDLOG_INFO("Saved names to {}", filepath_);
     } else {
-        spdlog::error("Failed to open {} for writing.", filepath_);
+        SPDLOG_ERROR("Failed to open {} for writing.", filepath_);
     }
 }
 
-std::optional<std::string> MeasurementNamer::get_name(const std::string& chess_index_str) {
+std::optional<std::string> MeasurementNamer::get_name(int index) {
+    std::string chess_index_str = to_chess_index(index);
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = names_.find(chess_index_str);
     if (it != names_.end()) {
@@ -54,7 +55,8 @@ std::optional<std::string> MeasurementNamer::get_name(const std::string& chess_i
     return std::nullopt;
 }
 
-void MeasurementNamer::set_name(const std::string& chess_index_str, const std::string& name) {
+void MeasurementNamer::set_name(int index, const std::string& name) {
+    std::string chess_index_str = to_chess_index(index);
     std::lock_guard<std::mutex> lock(mutex_);
     if (name.empty()) {
         names_.erase(chess_index_str);

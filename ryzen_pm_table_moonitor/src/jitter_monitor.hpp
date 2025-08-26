@@ -71,9 +71,9 @@ private:
         double variance = std::max(0.0, (sum_squared_periods_us_ / sample_count_) - (mean_period_us * mean_period_us));
         double std_dev_us = std::sqrt(variance);
 
-        spdlog::info("--- Jitter Stats (last {} samples) ---", sample_count_);
-        spdlog::info("Period Avg: {:.3f} us | StdDev: {:.3f} us", mean_period_us, std_dev_us);
-        spdlog::info("Period Min: {} us | Max: {} us", min_period_us_, max_period_us_);
+        SPDLOG_INFO("--- Jitter Stats (last {} samples) ---", sample_count_);
+        SPDLOG_INFO("Period Avg: {:.3f} us | StdDev: {:.3f} us", mean_period_us, std_dev_us);
+        SPDLOG_INFO("Period Min: {} us | Max: {} us", min_period_us_, max_period_us_);
 
         // Sort the collected data to calculate percentiles.
         // This is the most expensive operation and it's intentionally done here,
@@ -84,17 +84,17 @@ private:
         auto median_index = static_cast<size_t>(0.50 * (sample_count_ - 1));
         auto p99_index = static_cast<size_t>(0.99 * (sample_count_ - 1));
 
-        spdlog::info("Percentiles: 1st: {} us | 50th (Median): {} us | 99th: {} us",
+        SPDLOG_INFO("Percentiles: 1st: {} us | 50th (Median): {} us | 99th: {} us",
                      all_periods_us_[p1_index],
                      all_periods_us_[median_index],
                      all_periods_us_[p99_index]);
 
-        spdlog::info("Jitter Distribution (deviation from {}us):", target_period_us_);
+        SPDLOG_INFO("Jitter Distribution (deviation from {}us):", target_period_us_);
 
         for (int i = 0; i < jitter_histogram_.size(); ++i) {
             if (jitter_histogram_[i] > 0) {
                 long long deviation = i - histogram_range_us_;
-                spdlog::info("  Jitter [{:4d} us]: {} hits", deviation, jitter_histogram_[i]);
+                SPDLOG_INFO("  Jitter [{:4d} us]: {} hits", deviation, jitter_histogram_[i]);
             }
         }
 

@@ -1,5 +1,5 @@
 set(SPDLOG_SUBMODULE_DIR ${CMAKE_SOURCE_DIR}/extern/spdlog)
-find_package(spdlog)
+#find_package(spdlog)
 if (NOT spdlog_FOUND)
     message(STATUS "taskflow not found in dependencies folder")
     if (EXISTS ${SPDLOG_SUBMODULE_DIR}/CMakeLists.txt)

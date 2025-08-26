@@ -36,7 +36,6 @@
 // Required headers for thread scheduling and affinity
 #include <sched.h>
 #include <pthread.h>
-#include <cstring> // For strerror
 
 
 // Helper function to create a scrolling buffer for plots
@@ -152,7 +151,7 @@ void RenderCellDetails(int index, const CellStats& stats, const StressTester& st
 
 
     // --- UPDATED: Display/Edit Measurement Name Conditionally ---
-    std::string current_name = namer.get_name(chess_index).value_or("");
+    std::string current_name = namer.get_name(index).value_or("");
 
     if (is_editable) {
         // --- Editable version for the pinned window ---
@@ -164,12 +163,12 @@ void RenderCellDetails(int index, const CellStats& stats, const StressTester& st
         // Set a reasonable fixed width for the input text to avoid layout issues.
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize("Save").x - ImGui::GetStyle().FramePadding.x * 3);
         if (ImGui::InputText("Name", name_buffer, sizeof(name_buffer), ImGuiInputTextFlags_EnterReturnsTrue)) {
-            namer.set_name(chess_index, std::string(name_buffer));
+            namer.set_name(index, std::string(name_buffer));
             namer.save_to_file();
         }
         ImGui::SameLine();
         if (ImGui::Button("Save")) {
-            namer.set_name(chess_index, std::string(name_buffer));
+            namer.set_name(index, std::string(name_buffer));
             namer.save_to_file();
         }
     } else {
@@ -307,8 +306,9 @@ public:
     void scheduler_prologue(tf::Worker& worker) override {
 
         // We will designate worker 0 as our high-priority, real-time worker.
-        if (worker.id() == 0) {
-            spdlog::info("Configuring high-priority scheduling for worker {}", worker.id());
+        //if (worker.id() == 0)
+            {
+            SPDLOG_INFO("Configuring high-priority scheduling for worker {}", worker.id());
 
             // --- ENABLE REAL-TIME SCHEDULING (from your old code) ---
             #if defined(__linux__)
@@ -319,42 +319,44 @@ public:
 
             int ret = pthread_setschedparam(worker.thread().native_handle(), policy, &params);
             if (ret != 0) {
-                spdlog::error("Failed to set thread scheduling policy for worker {}. Error: {}", worker.id(), strerror(ret));
-                spdlog::warn("You may need to run with sudo or grant CAP_SYS_NICE capabilities.");
+                SPDLOG_ERROR("Failed to set thread scheduling policy for worker {}. Error: {}", worker.id(), strerror(ret));
+                SPDLOG_WARN("You may need to run with sudo or grant CAP_SYS_NICE capabilities.");
             } else {
-                spdlog::info("Successfully set worker {} scheduling policy to SCHED_FIFO with priority {}", worker.id(), params.sched_priority);
+                SPDLOG_INFO("Successfully set worker {} scheduling policy to SCHED_FIFO with priority {}", worker.id(), params.sched_priority);
             }
 
             // --- SET CPU AFFINITY (from your old code) ---
             cpu_set_t cpuset;
             CPU_ZERO(&cpuset);
             // Pin the thread to a specific core, e.g., core 3
-            const int core_id = 3;
+            const int core_id = worker.id();
             CPU_SET(core_id, &cpuset);
 
             ret = pthread_setaffinity_np(worker.thread().native_handle(), sizeof(cpu_set_t), &cpuset);
             if (ret != 0) {
-                spdlog::error("Failed to set CPU affinity for worker {}. Error: {}", worker.id(), strerror(ret));
+                SPDLOG_ERROR("Failed to set CPU affinity for worker {}. Error: {}", worker.id(), strerror(ret));
             } else {
-                spdlog::info("Successfully pinned worker {} to CPU {}", worker.id(), core_id);
+                SPDLOG_INFO("Successfully pinned worker {} to CPU {}", worker.id(), core_id);
             }
             #else
-            spdlog::warn("Real-time scheduling is only implemented for Linux in this example.");
+            SPDLOG_WARN("Real-time scheduling is only implemented for Linux in this example.");
             #endif
 
-        } else {
-            spdlog::info("Worker {} starting with default scheduling.", worker.id());
         }
+        // else {
+            // SPDLOG_INFO("Worker {} starting with default scheduling.", worker.id());
+        // }
     }
 
     // This method is called after a worker leaves the scheduling loop.
     void scheduler_epilogue(tf::Worker& worker, std::exception_ptr) override {
-        spdlog::info("Worker {} left the work-stealing loop.", worker.id());
+        SPDLOG_INFO("Worker {} left the work-stealing loop.", worker.id());
     }
 };
 
 int main() {
-    spdlog::info("Starting PM Table Monitor");
+    spdlog::set_pattern("[%T.%f] [%^%L%$] [thread %t] [src/%s:%# %!] %v");
+    SPDLOG_INFO("Starting PM Table Monitor");
 
     // NEW: Instantiate the namer and load data from the TOML file.
     // Ensure "pm_table_names.toml" is in the same directory as the executable.
@@ -362,10 +364,10 @@ int main() {
 
     // Setup window
     if (!glfwInit()) {
-        spdlog::error("Failed to initialize GLFW");
+        SPDLOG_ERROR("Failed to initialize GLFW");
         return -1;
     }
-    spdlog::info("GLFW initialized");
+    SPDLOG_INFO("GLFW initialized");
 
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
@@ -373,11 +375,11 @@ int main() {
 
     GLFWwindow *window = glfwCreateWindow(1280, 720, "PM Table Monitor", nullptr, nullptr);
     if (window == nullptr) {
-        spdlog::error("Failed to create GLFW window");
+        SPDLOG_ERROR("Failed to create GLFW window");
         glfwTerminate();
         return -1;
     }
-    spdlog::info("GLFW window created");
+    SPDLOG_INFO("GLFW window created");
     glfwMakeContextCurrent(window);
     // gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
 
@@ -396,7 +398,7 @@ int main() {
     ImGui_ImplOpenGL3_Init("#version 330");
 
     // 1. === Centralized Concurrency Setup ===
-    const size_t num_workers = 4;
+    const size_t num_workers = 2;
     tf::Executor executor(num_workers, tf::make_worker_interface<HighPriorityWorkerBehavior>());
     std::atomic<bool> stop_pipeline{false};
 
@@ -416,7 +418,7 @@ int main() {
     tf::Taskflow taskflow("PM_Table_Pipeline");
     tf::Pipeline pipeline(num_concurrent_pipelines,
         // Stage 1: Producer (Reads from file and WRITES to the shared buffer)
-        tf::Pipe{tf::PipeType::SERIAL, [&](tf::Pipeflow& pf) {
+        tf::Pipe{tf::PipeType::SERIAL, [&stop_pipeline, &pm_table_reader, &data_buffer](tf::Pipeflow& pf) {
             if (stop_pipeline.load(std::memory_order_relaxed)) {
                 pf.stop();
                 return;
@@ -427,11 +429,11 @@ int main() {
             static int bytes_to_read = -1;
             const std::chrono::microseconds target_period{1000};
 
-            static JitterMonitor jitter_monitor(target_period.count(), 5000 /* samples before reporting */, 2500);
+            static JitterMonitor jitter_monitor(target_period.count(), 5000 /* samples before reporting */, 60);
             static std::chrono::time_point<std::chrono::steady_clock> last_read_time = std::chrono::steady_clock::now();
 
             if (!pm_table_file.is_open()) {
-                if(!stop_pipeline) spdlog::error("PMTableReader: Failed to open file: {}", pm_table_reader.pm_table_path_);
+                if(!stop_pipeline) SPDLOG_ERROR("PMTableReader: Failed to open file: {}", pm_table_reader.pm_table_path_);
                 stop_pipeline = true;
                 pf.stop();
                 return;
@@ -442,9 +444,9 @@ int main() {
                 if (bytes_read > 0) {
                      bytes_to_read = (bytes_read / sizeof(float)) * sizeof(float);
                      read_buffer.resize(bytes_read / sizeof(float));
-                     spdlog::info("PMTableReader: Detected PM table size of {} bytes.", bytes_to_read);
+                     SPDLOG_INFO("PMTableReader: Detected PM table size of {} bytes.", bytes_to_read);
                 } else {
-                     spdlog::error("PMTableReader: Failed to get initial PM table size.");
+                     SPDLOG_ERROR("PMTableReader: Failed to get initial PM table size.");
                      stop_pipeline = true;
                      pf.stop();
                      return;
@@ -465,7 +467,10 @@ int main() {
                 long long timestamp_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(timestamp.time_since_epoch()).count();
 
                 // Place the result in the shared buffer at the current pipeline's line index.
-                data_buffer[pf.line()] = {timestamp_ns, read_buffer};
+                const auto line = pf.line();
+                data_buffer[line] = {timestamp_ns, read_buffer};
+                // SPDLOG_INFO("placed data in line {}", line);
+
             }
             long long period_us = std::chrono::duration_cast<std::chrono::microseconds>(timestamp - last_read_time).count();
             jitter_monitor.record_sample(period_us);
@@ -474,9 +479,11 @@ int main() {
         }},
 
         // Stage 2: Consumer (READS from the shared buffer and processes data)
-        tf::Pipe{tf::PipeType::PARALLEL, [&](const tf::Pipeflow& pf) {
+        tf::Pipe{tf::PipeType::PARALLEL, [&data_buffer, &analysis_manager, &pm_table_reader](const tf::Pipeflow& pf) {
             // Get a reference to the data produced by stage 1 on the same line.
-            const TimestampedData& data = data_buffer[pf.line()];
+            const auto line = pf.line();
+            const TimestampedData& data = data_buffer[line];
+            // SPDLOG_INFO("got data from line {}", line);
 
             // 2a. Update the high-frequency analysis data
             analysis_manager.process_data_packet(data);
@@ -536,7 +543,7 @@ int main() {
     // State for our new pinned windows. A vector of the cell indices we want to show.
     static std::vector<int> pinned_cell_indices;
 
-    spdlog::info("Entering main loop");
+    SPDLOG_INFO("Entering main loop");
     while (!glfwWindowShouldClose(window)) {
         float history = 10.0f;
         glfwPollEvents();
@@ -853,14 +860,13 @@ int main() {
                             analysis_manager.save_correlation_results_to_files(
                                 "correlation_report", // Base filename prefix
                                 [&](int index) { // Lambda function to get name for a given decimal index
-                                    std::string chess_idx = MeasurementNamer::to_chess_index(index);
-                                    return namer.get_name(chess_idx).value_or("");
+                                    return namer.get_name(index).value_or("");
                                 }
                             );
                         });
-                        spdlog::info("Analysis task submitted.");
+                        SPDLOG_INFO("Analysis task submitted.");
                     } else {
-                        spdlog::warn("Start stress threads before running analysis.");
+                        SPDLOG_WARN("Start stress threads before running analysis.");
                     }
                 }
                 ImGui::SameLine();
@@ -999,8 +1005,7 @@ int main() {
 
                         ImGui::TableSetBgColor(ImGuiTableBgTarget_CellBg, ImGui::ColorConvertFloat4ToU32(cell_color));
                         bool is_interesting = stats.get_stddev() > 0.00001f;
-                        std::string chess_index = MeasurementNamer::to_chess_index(i);
-                        std::string current_name = namer.get_name(chess_index).value_or("");
+                        std::string current_name = namer.get_name(i).value_or("");
                         bool has_name = !current_name.empty();
 
                         ImVec4 text_color = is_interesting ? ImVec4(1.0f, 1.0f, 0.0f, 1.0f)  // Yellow for interesting
@@ -1056,7 +1061,7 @@ int main() {
         glfwSwapBuffers(window);
     }
 
-    spdlog::info("Exiting main loop...");
+    SPDLOG_INFO("Exiting main loop...");
     // 6. === Coordinated Shutdown ===
     stop_pipeline = true;  // Signal the pipeline to stop producing tokens
     executor.wait_for_all(); // Wait for all tasks, including the pipeline, to finish
@@ -1071,6 +1076,6 @@ int main() {
     glfwDestroyWindow(window);
     glfwTerminate();
 
-    spdlog::info("Shutdown complete");
+    SPDLOG_INFO("Shutdown complete");
     return 0;
 }

@@ -54,7 +54,7 @@ struct SingleCoreCorrelationResult {
  * the color changes in real-time as the measurement progresses.
  */
 void AnalysisManager::run_correlation_analysis(StressTester* stress_tester) {
-    spdlog::info("Starting REAL-TIME correlation analysis...");
+    SPDLOG_INFO("Starting REAL-TIME correlation analysis...");
     const int core_count = stress_tester->get_core_count();
     const auto baseline_duration = std::chrono::milliseconds(1500);
     const auto active_duration = std::chrono::seconds(2);
@@ -67,7 +67,7 @@ void AnalysisManager::run_correlation_analysis(StressTester* stress_tester) {
     // This ensures that the table starts empty and the new results are cumulative.
     {
         std::lock_guard<std::mutex> lock(results_mutex_);
-        spdlog::info("Clearing all previous correlation data.");
+        SPDLOG_INFO("Clearing all previous correlation data.");
         for (auto& result : analysis_results_) {
             result.top_correlations.clear();
         }
@@ -82,7 +82,7 @@ void AnalysisManager::run_correlation_analysis(StressTester* stress_tester) {
 
     // Loop through each core to stress it individually.
     for (int stressed_core_id = 0; stressed_core_id < core_count; ++stressed_core_id) {
-        spdlog::info("Analysis: Measuring core {}...", stressed_core_id);
+        SPDLOG_INFO("Analysis: Measuring core {}...", stressed_core_id);
 
         // --- Step 1: Baseline Measurement (Core Idle) ---
         {
@@ -134,7 +134,7 @@ void AnalysisManager::run_correlation_analysis(StressTester* stress_tester) {
         stress_tester->set_thread_busy_state(stressed_core_id, false);
 
         // --- Step 3 is now integrated into the loop above ---
-        spdlog::info("Analysis: Finished real-time measurement for core {}.", stressed_core_id);
+        SPDLOG_INFO("Analysis: Finished real-time measurement for core {}.", stressed_core_id);
 
     }
 
@@ -142,7 +142,7 @@ void AnalysisManager::run_correlation_analysis(StressTester* stress_tester) {
     for (int i = 0; i < core_count; ++i) {
         stress_tester->set_thread_busy_state(i, true); // Restore all cores to busy by default
     }
-    spdlog::info("Full correlation analysis complete. All results are now displayed.");
+    SPDLOG_INFO("Full correlation analysis complete. All results are now displayed.");
 }
 /**
  * @brief Helper to update the correlation list for a single cell.
@@ -183,7 +183,7 @@ void AnalysisManager::update_or_insert_correlation(CellStats& stats, int core_id
 }
 
 void AnalysisManager::reset_stats() {
-    spdlog::info("Resetting statistics...");
+    SPDLOG_INFO("Resetting statistics...");
     std::lock_guard<std::mutex> lock(results_mutex_);
     for (auto& stats : analysis_results_) {
         stats.reset();
@@ -203,7 +203,7 @@ void AnalysisManager::save_correlation_results_to_files(
     std::lock_guard<std::mutex> lock(results_mutex_); // Lock access to analysis_results_
 
     if (analysis_results_.empty()) {
-        spdlog::warn("No analysis results to save.");
+        SPDLOG_WARN("No analysis results to save.");
         return;
     }
 
@@ -220,12 +220,12 @@ void AnalysisManager::save_correlation_results_to_files(
     // --- Open Files ---
     std::ofstream table_file(table_filename);
     if (!table_file.is_open()) {
-        spdlog::error("Failed to open file for correlation table: {}", table_filename);
+        SPDLOG_ERROR("Failed to open file for correlation table: {}", table_filename);
         return;
     }
     std::ofstream summary_file(summary_filename);
     if (!summary_file.is_open()) {
-        spdlog::error("Failed to open file for correlation summary: {}", summary_filename);
+        SPDLOG_ERROR("Failed to open file for correlation summary: {}", summary_filename);
         table_file.close(); // Close the first file if the second fails
         return;
     }
@@ -273,7 +273,7 @@ void AnalysisManager::save_correlation_results_to_files(
     }
 
     table_file.close();
-    spdlog::info("Correlation table saved to {}", table_filename);
+    SPDLOG_INFO("Correlation table saved to {}", table_filename);
 
     // --- Write Summary Statistics ---
     if (!all_correlation_strengths.empty()) {
@@ -304,5 +304,5 @@ void AnalysisManager::save_correlation_results_to_files(
     }
 
     summary_file.close();
-    spdlog::info("Correlation summary saved to {}", summary_filename);
+    SPDLOG_INFO("Correlation summary saved to {}", summary_filename);
 }

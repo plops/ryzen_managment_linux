@@ -68,7 +68,7 @@ void setup() {
     // --- SET CPU AFFINITY ---
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
-    // Pin the thread to a specific core, e.g., core 3
+    // Pin the thread to a specific core, e.g., core 0
     const int core_id = 0;
     CPU_SET(core_id, &cpuset);
 

@@ -35,7 +35,7 @@ struct CellStats {
     int count = 0;
 
     // For correlation analysis
-    static constexpr int HISTORY_SIZE = 2'000; // Increased to 400 for hover graph
+    static constexpr int HISTORY_SIZE = 2'000; // Increased to 2000 for hover graph
     std::deque<TimestampedSample> history; // Use deque for efficient front removal
 
     // CHANGED: Replaced single dominant core with a vector for the top correlated cores.
