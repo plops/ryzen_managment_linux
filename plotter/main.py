@@ -3,8 +3,12 @@
 import struct
 import pandas as pd
 import matplotlib
-matplotlib.use('Qt5Agg') 
+import time
+import datetime
+
+matplotlib.use('Qt5Agg')
 import matplotlib.pyplot as plt
+
 plt.ion()
 import numpy as np
 from pathlib import Path
@@ -18,14 +22,14 @@ LOG_FILE_PATH = "pm_table_log.bin"
 METRIC_OFFSETS = {
     # Power Metrics (Watts)
     "socket_power": 0x48,
-    "cpu_power": 0x4C,       # VDDCR_CPU_POWER
-    "soc_power": 0x5C,       # VDDCR_SOC_POWER
+    "cpu_power": 0x4C,  # VDDCR_CPU_POWER
+    "soc_power": 0x5C,  # VDDCR_SOC_POWER
 
     # Temperature Metrics (Celsius)
-    "cpu_temp": 0x14,        # Tdie temperature
+    "cpu_temp": 0x14,  # Tdie temperature
 
     # Core Metrics (Arrays for 16 cores)
-    "core_power": 0x194,     # Array of 16 floats
+    "core_power": 0x194,  # Array of 16 floats
     "core_freq_eff": 0x2CC,  # Array of 16 floats (Effective Frequency)
 }
 # Number of CPU cores the PM table provides data for (Vermeer provides 16 slots)
@@ -70,7 +74,7 @@ def parse_log_file(filepath: Path) -> pd.DataFrame:
             try:
                 # Unpack single float values
                 for name, offset in METRIC_OFFSETS.items():
-                    if 'core_' not in name: # Handle single values
+                    if 'core_' not in name:  # Handle single values
                         if offset + 4 <= data_size:
                             value = struct.unpack_from('<f', pm_data, offset)[0]
                             record[name] = value
@@ -89,7 +93,7 @@ def parse_log_file(filepath: Path) -> pd.DataFrame:
                 if offset + num_bytes <= data_size:
                     core_freqs = struct.unpack_from(f'<{TABLE_CORE_COUNT}f', pm_data, offset)
                     # Get average and peak frequency of active cores
-                    active_freqs = [f for f in core_freqs if f > 100] # Filter out sleeping cores
+                    active_freqs = [f for f in core_freqs if f > 100]  # Filter out sleeping cores
                     if active_freqs:
                         record['avg_core_freq'] = np.mean(active_freqs)
                         record['peak_core_freq'] = np.max(active_freqs)
@@ -109,6 +113,7 @@ def parse_log_file(filepath: Path) -> pd.DataFrame:
     df = pd.DataFrame(records)
     df = df.set_index('timestamp')
     return df
+
 
 def plot_data(df: pd.DataFrame):
     """Generates and displays plots from the parsed data."""
@@ -153,29 +158,49 @@ def plot_data(df: pd.DataFrame):
     # Improve formatting for the x-axis date labels
     fig.autofmt_xdate()
     plt.xlabel('Time')
-    plt.tight_layout(rect=[0, 0.03, 1, 0.98]) # Adjust for suptitle
+    plt.tight_layout(rect=[0, 0.03, 1, 0.98])  # Adjust for suptitle
     plt.show()
     plt.savefig("o.png")
 
-def main():
-    """Main function to run the script."""
-    try:
-        log_path = Path(LOG_FILE_PATH)
-        print(f"Attempting to parse log file: {log_path.resolve()}")
-        data_df = parse_log_file(log_path)
-        print(f"Successfully parsed {len(data_df)} records.")
+    # def main():
+    #     """Main function to run the script."""
+    #     try:
+    #         log_path = Path(LOG_FILE_PATH)
+    #         print(f"Attempting to parse log file: {log_path.resolve()}")
+    #         data_df = parse_log_file(log_path)
+    #         print(f"Successfully parsed {len(data_df)} records.")
+    #
+    #         if not data_df.empty:
+    #             print("\nDisplaying first 5 rows of data:")
+    #             print(data_df.head())
+    #             plot_data(data_df)
+    #         else:
+    #             print("No data was parsed from the log file.")
+    #
+    #     except FileNotFoundError as e:
+    #         print(f"Error: {e}")
+    #     except Exception as e:
+    #         print(f"An unexpected error occurred: {e}")
+    #
+    # if __name__ == "__main__":
+    #     main()
 
-        if not data_df.empty:
-            print("\nDisplaying first 5 rows of data:")
-            print(data_df.head())
-            plot_data(data_df)
-        else:
-            print("No data was parsed from the log file.")
+log_path = Path(LOG_FILE_PATH)
+print(f"Attempting to parse log file: {log_path.resolve()}")
+data_df = parse_log_file(log_path)
+print(f"Successfully parsed {len(data_df)} records.")
 
-    except FileNotFoundError as e:
-        print(f"Error: {e}")
-    except Exception as e:
-        print(f"An unexpected error occurred: {e}")
-
-if __name__ == "__main__":
-    main()
+jitter = np.diff(data_df.index).astype(float)*1e-6 - 1
+std = np.std(jitter)
+med = np.median(jitter)
+p99 = np.percentile(np.abs(jitter), 99)
+mn = np.mean(jitter)
+mi = np.min(jitter)
+ma = np.max(jitter)
+title = f"min={mi:3.2f} mean={mn:3.2f} std={std:3.2f} med={med:3.2f} p99={p99:3.2f} max={ma:3.2f}"
+plt.hist(jitter,bins=np.linspace(-1,4,200),log=True)
+plt.xlabel("time [ms]")
+plt.title(title)
+now = datetime.datetime.now()
+now_str = now.isoformat()
+plt.savefig(f"jitter_{now_str}.png")

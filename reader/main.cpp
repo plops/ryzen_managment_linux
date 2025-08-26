@@ -44,18 +44,54 @@ uint64_t read_sysfs_uint64(const std::string& path) {
     }
     return value;
 }
+#define SPDLOG_ERROR
+#define SPDLOG_INFO
+#define SPDLOG_WARN
+
+void setup() {
+    // --- ENABLE REAL-TIME SCHEDULING ---
+    const int policy = SCHED_FIFO;
+    sched_param params{};
+    // Set a high priority (1-99 for SCHED_FIFO).
+    params.sched_priority = 80;
+
+    auto current_thread = pthread_self();
+
+    int ret = pthread_setschedparam(current_thread, policy, &params);
+    // if (ret != 0) {
+    //     SPDLOG_ERROR("Failed to set thread scheduling policy for worker {}. Error: {}", worker.id(), strerror(ret));
+    //     SPDLOG_WARN("You may need to run with sudo or grant CAP_SYS_NICE capabilities.");
+    // } else {
+    //     SPDLOG_INFO("Successfully set worker {} scheduling policy to SCHED_FIFO with priority {}", worker.id(), params.sched_priority);
+    // }
+
+    // --- SET CPU AFFINITY ---
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    // Pin the thread to a specific core, e.g., core 3
+    const int core_id = 0;
+    CPU_SET(core_id, &cpuset);
+
+    ret = pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset);
+    // if (ret != 0) {
+    //     SPDLOG_ERROR("Failed to set CPU affinity for worker {}. Error: {}", worker.id(), strerror(ret));
+    // } else {
+    //     SPDLOG_INFO("Successfully pinned worker {} to CPU {}", worker.id(), core_id);
+    // }
+}
 
 int main() {
     // Register signal handlers for SIGINT (Ctrl+C) and SIGTERM
     signal(SIGINT, signalHandler);
     signal(SIGTERM, signalHandler);
-
+    setup();
     // Check for root privileges, which are required to access the driver's sysfs files
-    if (geteuid() != 0) {
-        std::cerr << "Error: This program requires root privileges to read from sysfs." << std::endl;
-        std::cerr << "Please run with sudo." << std::endl;
-        return EXIT_FAILURE;
-    }
+    // if (geteuid() != 0) {
+    //     std::cerr << "Error: This program requires root privileges to read from sysfs." << std::endl;
+    //     std::cerr << "Please run with sudo." << std::endl;
+    //     return EXIT_FAILURE;
+    // }
+
 
     try {
         // First, determine the exact size of the pm_table
@@ -73,6 +109,8 @@ int main() {
             std::cerr << "Is the ryzen_smu kernel module loaded?" << std::endl;
             return EXIT_FAILURE;
         }
+        pm_table_stream.seekg(0); // Seek to the beginning for each read
+
 
         // Open the output file for writing the logged data
         std::ofstream output_stream(OUTPUT_FILE_PATH, std::ios::binary | std::ios::trunc);
@@ -100,7 +138,6 @@ int main() {
             uint64_t timestamp_u64 = static_cast<uint64_t>(timestamp_ns);
 
             // 2. Read the binary pm_table data
-            pm_table_stream.seekg(0); // Seek to the beginning for each read
             pm_table_stream.read(buffer.data(), pm_table_size);
 
             if (!pm_table_stream) {
@@ -116,6 +153,8 @@ int main() {
             output_stream.write(buffer.data(), pm_table_size);
 
             samples_written++;
+
+            pm_table_stream.seekg(0); // Seek to the beginning for each read
 
             // 4. Sleep until the next scheduled sample time
             std::this_thread::sleep_until(next_sample_time);
