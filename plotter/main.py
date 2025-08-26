@@ -153,48 +153,39 @@ mi = np.min(jitter)
 ma = np.max(jitter)
 title = f"min={mi:.2g}ms mean={mn:.2g}ms std={std:.2g}ms med={med:.2g}ms p99={p99:.2g}ms max={ma:.2g} n={len(jitter)}"
 
-# --- CORRECTED HISTOGRAM BIN COMPUTATION ---
-# The goal is to create logarithmic-like bins that are symmetric around 0.
-# We want high resolution (narrow bins) close to 0 and lower resolution (wider bins) further away.
-
-# 1. Determine the overall range by finding the maximum absolute jitter value.
-#    We add a small epsilon to avoid issues if max is exactly 0.
+# --- HISTOGRAM BIN COMPUTATION ---
 limit = max(abs(mi), abs(ma)) + 1e-9
-
-# 2. Define the starting point for the logarithmic scale. This will be the edge
-#    of our finest-resolution bin closest to zero. A smaller value gives
-#    higher resolution near the center.
-start_val = 0.001  # ms
-
-# 3. Generate a logarithmic sequence for the positive side of the histogram.
-#    We create 500 bins from our small starting value up to the limit.
+start_val = 0.00001  # Start at 0.001 ms for higher resolution near the center
 positive_bins = np.logspace(np.log10(start_val), np.log10(limit), num=500)
-
-# 4. Create the negative side by negating and flipping the positive bins.
-#    This ensures the bins are perfectly symmetric around zero.
 negative_bins = -np.flip(positive_bins)
-
-# 5. Combine the negative and positive bins. The space between -start_val and
-#    +start_val will form the central bin of the histogram.
 bins = np.concatenate((negative_bins, positive_bins))
 
 # --- Plotting ---
 plt.figure(figsize=(12, 7))
 plt.hist(jitter, bins=bins, log=True)
+
+# --- SET BI-LOGARITHMIC (SYMLOG) X-AXIS ---
+# This makes the x-axis logarithmic for values far from zero and linear near zero.
+# 'linthresh' defines the range (-linthresh, linthresh) where the scale is linear.
+# We set it to our start_val to match the finest bin resolution.
+plt.xscale('symlog', linthresh=start_val)
+
 plt.xlabel("Jitter (Deviation from 1ms Interval) [ms]")
 plt.ylabel("Count (Log Scale)")
-plt.title(title)
+plt.title(f"Jitter Distribution (Symmetric Log Scale)\n{title}")
 plt.grid(True, which="both", linestyle='--', linewidth=0.5)
+
+# Improve x-axis tick formatting for readability
+from matplotlib.ticker import StrMethodFormatter
+plt.gca().xaxis.set_major_formatter(StrMethodFormatter('{x:g}'))
+
 
 now = datetime.datetime.now()
 now_str = now.strftime("%Y-%m-%d_%H-%M-%S")
-output_filename = f"jitter_{now_str}.png"
+output_filename = f"jitter_symlog_{now_str}.png"
 plt.savefig(output_filename)
 print(f"Saved jitter histogram to {output_filename}")
 print(title)
-# To display the plot in an interactive environment
-# plt.show()
-
 
 def plot_data(df: pd.DataFrame):
     """Generates and displays plots from the parsed data."""
