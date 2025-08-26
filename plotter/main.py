@@ -3,7 +3,7 @@
 import struct
 import pandas as pd
 import matplotlib
-import time
+import os
 import datetime
 
 matplotlib.use('Qt5Agg')
@@ -36,7 +36,7 @@ METRIC_OFFSETS = {
 TABLE_CORE_COUNT = 16
 
 
-def parse_log_file(filepath: Path) -> pd.DataFrame:
+def parse_log_file(filepath: Path, fast: bool = False) -> pd.DataFrame:
     """
     Parses the binary log file and extracts PM table metrics into a pandas DataFrame.
 
@@ -44,6 +44,8 @@ def parse_log_file(filepath: Path) -> pd.DataFrame:
     - 8 bytes: Timestamp (uint64, nanoseconds since epoch)
     - 8 bytes: Data Size (uint64, size of the pm_table data)
     - N bytes: Raw pm_table data (array of 32-bit floats)
+
+    fast .. don't store the payload (only the timestamps for jitter estimation)
     """
     if not filepath.exists():
         raise FileNotFoundError(f"Log file not found at: {filepath}")
@@ -51,7 +53,19 @@ def parse_log_file(filepath: Path) -> pd.DataFrame:
     records = []
 
     with open(filepath, "rb") as f:
+        # seek to the end of the file
+        f.seek(0,os.SEEK_END)
+        # store the file size
+        file_size = f.tell()
+        f.seek(0)
+        count = 0
         while True:
+            count = count + 1
+            if (count % 10000 == 0):
+                # print current read position
+                file_offset = f.tell()
+                read_percentage = file_offset / file_size
+                print(f'{read_percentage:.2f}%')
             # Read the header for the next record
             header_data = f.read(16)
             if not header_data:
@@ -70,42 +84,42 @@ def parse_log_file(filepath: Path) -> pd.DataFrame:
             record = {
                 "timestamp": pd.to_datetime(timestamp_ns, unit='ns')
             }
+            if not fast:
+                try:
+                    # Unpack single float values
+                    for name, offset in METRIC_OFFSETS.items():
+                        if 'core_' not in name:  # Handle single values
+                            if offset + 4 <= data_size:
+                                value = struct.unpack_from('<f', pm_data, offset)[0]
+                                record[name] = value
+                            else:
+                                record[name] = np.nan
 
-            try:
-                # Unpack single float values
-                for name, offset in METRIC_OFFSETS.items():
-                    if 'core_' not in name:  # Handle single values
-                        if offset + 4 <= data_size:
-                            value = struct.unpack_from('<f', pm_data, offset)[0]
-                            record[name] = value
+                    # Unpack core-specific arrays
+                    offset = METRIC_OFFSETS["core_power"]
+                    num_bytes = TABLE_CORE_COUNT * 4
+                    if offset + num_bytes <= data_size:
+                        core_powers = struct.unpack_from(f'<{TABLE_CORE_COUNT}f', pm_data, offset)
+                        # Sum of valid core powers (ignore sleeping cores which report 0)
+                        record['total_core_power'] = sum(p for p in core_powers if p > 0)
+
+                    offset = METRIC_OFFSETS["core_freq_eff"]
+                    if offset + num_bytes <= data_size:
+                        core_freqs = struct.unpack_from(f'<{TABLE_CORE_COUNT}f', pm_data, offset)
+                        # Get average and peak frequency of active cores
+                        active_freqs = [f for f in core_freqs if f > 100]  # Filter out sleeping cores
+                        if active_freqs:
+                            record['avg_core_freq'] = np.mean(active_freqs)
+                            record['peak_core_freq'] = np.max(active_freqs)
                         else:
-                            record[name] = np.nan
+                            record['avg_core_freq'] = 0
+                            record['peak_core_freq'] = 0
 
-                # Unpack core-specific arrays
-                offset = METRIC_OFFSETS["core_power"]
-                num_bytes = TABLE_CORE_COUNT * 4
-                if offset + num_bytes <= data_size:
-                    core_powers = struct.unpack_from(f'<{TABLE_CORE_COUNT}f', pm_data, offset)
-                    # Sum of valid core powers (ignore sleeping cores which report 0)
-                    record['total_core_power'] = sum(p for p in core_powers if p > 0)
+                    records.append(record)
 
-                offset = METRIC_OFFSETS["core_freq_eff"]
-                if offset + num_bytes <= data_size:
-                    core_freqs = struct.unpack_from(f'<{TABLE_CORE_COUNT}f', pm_data, offset)
-                    # Get average and peak frequency of active cores
-                    active_freqs = [f for f in core_freqs if f > 100]  # Filter out sleeping cores
-                    if active_freqs:
-                        record['avg_core_freq'] = np.mean(active_freqs)
-                        record['peak_core_freq'] = np.max(active_freqs)
-                    else:
-                        record['avg_core_freq'] = 0
-                        record['peak_core_freq'] = 0
-
-                records.append(record)
-
-            except struct.error as e:
-                print(f"Warning: Could not unpack data for a record. Error: {e}. Skipping.")
-                continue
+                except struct.error as e:
+                    print(f"Warning: Could not unpack data for a record. Error: {e}. Skipping.")
+                    continue
 
     if not records:
         return pd.DataFrame()
@@ -187,7 +201,7 @@ def plot_data(df: pd.DataFrame):
 
 log_path = Path(LOG_FILE_PATH)
 print(f"Attempting to parse log file: {log_path.resolve()}")
-data_df = parse_log_file(log_path)
+data_df = parse_log_file(log_path, True)
 print(f"Successfully parsed {len(data_df)} records.")
 
 jitter = np.diff(data_df.index).astype(float)*1e-6 - 1
