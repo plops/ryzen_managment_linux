@@ -4,7 +4,7 @@ uv run python main.py
 ```
 
 
-example output
+example  output
 
 ```
 
