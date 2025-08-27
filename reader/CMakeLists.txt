@@ -24,5 +24,11 @@ target_compile_options(pm_reader PRIVATE -Wall -Wextra -pedantic)
 find_package(Threads REQUIRED)
 target_link_libraries(pm_reader PRIVATE Threads::Threads)
 
+
+add_executable(pm_measure measure.cpp)
+target_link_libraries(pm_measure PRIVATE Threads::Threads)
+file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/results)
+
+
 # Optional: Create an "install" target
-install(TARGETS pm_reader DESTINATION bin)
+install(TARGETS pm_reader pm_measure DESTINATION bin)
