@@ -1,0 +1,36 @@
+explain the difference between the std::chrono::steady_clock::now() and std::chrono::system_clock::now()
+what other clocks are there?
+how are they related to /sys/devices/system/clocksource/clocksource0/current_clocksource in linux
+on my system i have the choice:
+ $ cat /sys/devices/system/clocksource/clocksource0/available_clocksource
+hpet acpi_pm
+
+my use case is that i very periodically want to read out a measurement
+and store the timestamps (for verification)
+
+i start the system like this:
+
+
+kiel@localhost ~ $ uname -a
+Linux localhost 6.12.31-gentoo #2 SMP PREEMPT_RT Sun Aug 24 08:58:21 -00 2025 x86_64 AMD Ryzen 5 5625U with Radeon Graphics AuthenticAMD GNU/Linux
+kiel@localhost ~ $ cat /proc/cmdline
+BOOT_IMAGE=/vmlinuz root=/dev/nvme0n1p3 squashfs.part=/dev/disk/by-uuid/b8e2ce97-2ae8-4c8f-b350-8f11cc119508 squashfs.file=gentoo.squashfs persist.part=/dev/disk/by-uuid/bbac9bb8-39d9-42fa-8d04-94610ced9839 persist.lv=/dev/mapper/enc persist.mapname=enc isolcpus=0,1
+
+as you can see it has realtime preemption and frees the cpus 0 and 1 (this is where the code runs)
+
+
+
+what clock shall i use to synchronize multiple threads that run on different cores.
+
+
+while one thread on the isolated core 0 keeps reading the pm_table at 1kHz, the other cores shall be sequentially put to work with a periodic load. the idea is that these cores will increase their power consumption and increase temperature. i want to track the effect on the sensors of all the cores in the pm_table. the timestamps of the transition between busy and  waiting, or the other way around shall be stored and communicated to the pm_table measurement task. the busy time (in multiples of 1ms and the duty cycle 10% to 90%) shall be parameters.
+
+
+i want to store the captured data in a pre-allocated array
+i want to accumulate statistics (mean, stddev) for all the contained floats. if stddev is non-zero (after the first few measurements) then also collect the median of all values when the core-under-test is busy minus the median of all the values when the core-under-test is waiting. also compute the difference of the  means (i call this measurement the signal correlation with respect to the core-under-test).
+
+for each of the entries in the pm_table (that have non-zero stddev, i.e. don't report constant values in the first test) i want to store the correlation mean and median correlations for each core-under-test.
+
+as the temperature, or frequency of the core may change with a delay. i also want to measure this somehow, suggest ways of how i can do this. (perhaps showing sequential samples with core-under-test waiting, busy, waiting filled  by the binned measurements of repeated results, similar to how eye-diagrams are shown in RF equipment tests)
+ 
+as well as for the acquisition time. i must ensure that sampling time is as close as possible to 1ms and that the readout and statistics computations themselves never take more than 1ms. these durations shall be stored and statistics computed (most importantly an estimate of the 99 percentile, the maximum, the mean and the medium and the minimum)
