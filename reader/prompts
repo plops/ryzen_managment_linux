@@ -5,6 +5,7 @@ on my system i have the choice:
  $ cat /sys/devices/system/clocksource/clocksource0/available_clocksource
 hpet acpi_pm
 
+
 my use case is that i very periodically want to read out a measurement
 and store the timestamps (for verification)
 
@@ -34,3 +35,16 @@ for each of the entries in the pm_table (that have non-zero stddev, i.e. don't r
 as the temperature, or frequency of the core may change with a delay. i also want to measure this somehow, suggest ways of how i can do this. (perhaps showing sequential samples with core-under-test waiting, busy, waiting filled  by the binned measurements of repeated results, similar to how eye-diagrams are shown in RF equipment tests)
  
 as well as for the acquisition time. i must ensure that sampling time is as close as possible to 1ms and that the readout and statistics computations themselves never take more than 1ms. these durations shall be stored and statistics computed (most importantly an estimate of the 99 percentile, the maximum, the mean and the medium and the minimum)
+
+
+a thread ripper system achieves far better jitter performance: p99 is 1.6us. i think this is because of the tsc clock source:
+$ uname -a
+Linux localhost 6.12.31-gentoo #2 SMP PREEMPT_RT Sun Aug 24 08:58:21 -00 2025 x86_64 AMD Ryzen Threadripper PRO 7955WX 16-Cores AuthenticAMD GNU/Linux
+localhost /home/kiel # cat /sys/devices/system/clocksource/clocksource0/available_clocksource
+tsc hpet acpi_pm 
+localhost /home/kiel # cat /sys/devices/system/clocksource/clocksource0/current_clocksource 
+tsc
+
+on the ryzen laptop tsc is not available because it failed stability check (likely because of frequency scaling)
+override with kernel parameter tsc=reliable allows the selection of this source but the jitter measurements are
+very bad (p99 26ms, std 8.5ms)
