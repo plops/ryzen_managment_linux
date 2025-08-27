@@ -8,6 +8,8 @@
 #include <algorithm>
 #include <fstream>
 #include <iomanip>
+#include <memory>
+#include <cassert>
 
 #include "popl.hpp"
 #include "workloads.hpp"
@@ -21,25 +23,85 @@ using Duration = std::chrono::duration<double, std::nano>;
 
 // Represents a single sample from the measurement thread
 struct MeasurementSample {
-    TimePoint timestamp;
-    int worker_state; // 0 for waiting, 1 for busy
-    float mock_sensor_1; // Placeholder for PM table data
-    float mock_sensor_2;
+    explicit MeasurementSample(size_t n_measurements) : measurements(n_measurements) {
+    };
+    TimePoint timestamp{};
+    int worker_state{0}; // 0 for waiting, 1 for busy
+    std::vector<float> measurements;
 };
 
 // Represents a state transition event from the worker thread
 struct WorkerTransition {
     TimePoint timestamp;
-    int new_state; // 0 for waiting, 1 for busy
+    int new_state{}; // 0 for waiting, 1 for busy
 };
 
-// --- Mock PM Table Reader ---
-// Replace this with your actual PM table reading logic
-void read_pm_table(float& val1, float& val2) {
+// --- PM Table Reader ---
+
+/** @brief Reads float array from sysfs pm_table
+ *  Constructor detects the size of the pm_table
+ *  read reads all the elements into a char pointer and seeks back for next iteration
+ */
+class PmTableReader {
+    const char *PM_TABLE_PATH = "/sys/kernel/ryzen_smu_drv/pm_table";
+    const char *PM_TABLE_SIZE_PATH = "/sys/kernel/ryzen_smu_drv/pm_table_size";
+
+public:
+    PmTableReader()
+        : pm_table_size{read_sysfs_uint64(PM_TABLE_SIZE_PATH)}, // First, determine the exact size of the pm_table
+          pm_table_stream(PM_TABLE_PATH, std::ios::binary) {
+        if (pm_table_size == 0 || pm_table_size > 16384) {
+            // Sanity check size
+            std::cerr << "Error: Invalid pm_table size reported: " << pm_table_size << " bytes." << std::endl;
+        }
+        std::cout << "Detected pm_table size: " << pm_table_size << " bytes." << std::endl;
+        if (!pm_table_stream) {
+            std::cerr << "Error: Failed to open " << PM_TABLE_PATH << "." << std::endl;
+            std::cerr << "Is the ryzen_smu kernel module loaded?" << std::endl;
+        }
+        pm_table_stream.seekg(0); // Seek to the beginning for each read
+    }
+
+    uint64_t getPmTableSize() const {
+        return pm_table_size;
+    }
+
+    void read(char *buffer) {
+        pm_table_stream.read(buffer, getPmTableSize());
+        pm_table_stream.seekg(0); // Seek to the beginning for next read
+    }
+
+private:
+    /**
+    * @brief Reads a 64-bit unsigned integer from a sysfs file.
+    * @param path The path to the sysfs file.
+    * @return The uint64_t value read from the file.
+    * @throws std::runtime_error if the file cannot be opened or read.
+    */
+    uint64_t read_sysfs_uint64(const std::string &path) {
+        std::ifstream file(path, std::ios::binary);
+        if (!file.is_open()) {
+            throw std::runtime_error("Failed to open sysfs file: " + path);
+        }
+        uint64_t value = 0;
+        file.read(reinterpret_cast<char *>(&value), sizeof(value));
+        if (!file) {
+            throw std::runtime_error("Failed to read from sysfs file: " + path);
+        }
+        return value;
+    }
+
+    uint64_t pm_table_size;
+    std::ifstream pm_table_stream;
+};
+
+
+void read_pm_table(float &val1, float &val2) {
     // In a real scenario, this would read from sysfs or a driver
     val1 = 10.0f;
     val2 = 20.0f;
 }
+
 
 // --- Global Atomic Flags for Thread Synchronization ---
 // These are used to signal start/stop without using mutexes
@@ -50,8 +112,9 @@ std::atomic<int> g_worker_state = 0; // The single point of communication during
 // --- Thread Functions ---
 
 void measurement_thread_func(int core_id,
-                             std::vector<MeasurementSample>& storage,
-                             size_t& sample_count) {
+                             std::vector<MeasurementSample> &storage,
+                             size_t &sample_count,
+                             PmTableReader &pm_table_reader) {
     if (!set_thread_affinity(core_id)) {
         std::cerr << "Warning: Failed to set measurement thread affinity to core " << core_id << std::endl;
     }
@@ -68,13 +131,16 @@ void measurement_thread_func(int core_id,
         TimePoint timestamp = Clock::now();
         int worker_state = g_worker_state.load(std::memory_order_relaxed);
 
-        // Read sensors
-        float s1, s2;
-        read_pm_table(s1, s2);
-
         // Store in pre-allocated buffer
         if (sample_count < storage.size()) {
-            storage[sample_count++] = {timestamp, worker_state, s1, s2};
+            auto target = storage[sample_count];
+            auto floatPtr = target.measurements.data();
+            auto charPtr = reinterpret_cast<char *>(floatPtr);
+            // Read sensors
+            pm_table_reader.read(charPtr);
+            target.timestamp = timestamp;
+            target.worker_state = worker_state;
+            sample_count++;
         }
 
         // Wait until the next 1ms interval
@@ -87,8 +153,8 @@ void worker_thread_func(int core_id,
                         int period_ms,
                         int duty_cycle_percent,
                         int num_cycles,
-                        std::vector<WorkerTransition>& storage,
-                        size_t& transition_count) {
+                        std::vector<WorkerTransition> &storage,
+                        size_t &transition_count) {
     if (!set_thread_affinity(core_id)) {
         std::cerr << "Warning: Failed to set worker thread affinity to core " << core_id << std::endl;
     }
@@ -126,8 +192,8 @@ void worker_thread_func(int core_id,
 
 // --- Analysis Function ---
 void analyze_and_print_results(int core_id,
-                             const std::vector<MeasurementSample>& measurements, size_t sample_count,
-                             const std::vector<WorkerTransition>& transitions, size_t transition_count) {
+                               const std::vector<MeasurementSample> &measurements, size_t sample_count,
+                               const std::vector<WorkerTransition> &transitions, size_t transition_count) {
     std::cout << "--- Analyzing Core " << core_id << " ---" << std::endl;
     std::cout << "Collected " << sample_count << " measurement samples." << std::endl;
     std::cout << "Recorded " << transition_count << " worker transitions." << std::endl;
@@ -164,17 +230,19 @@ void analyze_and_print_results(int core_id,
 
 // --- Main Program Logic ---
 
-int main(int argc, char** argv) {
+int main(int argc, char **argv) {
     using namespace popl;
 
     // --- Command Line Parsing ---
     OptionParser op("Allowed options");
     auto help_option = op.add<Switch>("h", "help", "produce help message");
-    auto period_opt = op.add<Value<int>>("p", "period", "Period of the worker task in milliseconds", 100);
-    auto duty_cycle_opt = op.add<Value<int>>("d", "duty-cycle", "Duty cycle of the worker task in percent (10-90)", 50);
-    auto cycles_opt = op.add<Value<int>>("c", "cycles", "How many busy/wait cycles to run per core", 100);
-    auto rounds_opt = op.add<Value<int>>("r", "rounds", "How many times to cycle through all cores", 1);
-    auto outfile_opt = op.add<Value<std::string>>("o", "output", "Output filename for results", "results/output.csv");
+    auto period_opt = op.add<Value<int> >("p", "period", "Period of the worker task in milliseconds", 100);
+    auto duty_cycle_opt = op.add<Value<int> >("d", "duty-cycle", "Duty cycle of the worker task in percent (10-90)",
+                                              50);
+    auto cycles_opt = op.add<Value<int> >("c", "cycles", "How many busy/wait cycles to run per core", 100);
+    auto rounds_opt = op.add<Value<int> >("r", "rounds", "How many times to cycle through all cores", 1);
+    auto outfile_opt = op.add<Value<std::string> >("o", "output", "Output filename for results",
+                                                   "results/output.csv");
 
     op.parse(argc, argv);
 
@@ -189,11 +257,19 @@ int main(int argc, char** argv) {
     std::cout << "System has " << num_hardware_threads << " hardware threads." << std::endl;
     std::cout << "Measurement thread will be pinned to core " << measurement_core << "." << std::endl;
 
+    PmTableReader reader;
+    const size_t n_measurements = reader.getPmTableSize() / sizeof(float);
+
     // --- Pre-allocation of Memory ---
-    const size_t max_samples_per_run = (period_opt->value() / 1) * cycles_opt->value() + 1000; // 1ms sample rate + buffer
+    const size_t max_samples_per_run = (period_opt->value() / 1) * cycles_opt->value() + 1000;
+    // 1ms sample rate + buffer
     const size_t max_transitions_per_run = cycles_opt->value() * 2;
 
-    std::vector<MeasurementSample> measurement_storage(max_samples_per_run);
+    std::vector<MeasurementSample> measurement_storage;
+    measurement_storage.reserve(max_samples_per_run);
+    for (auto &&e: measurement_storage) {
+        e.measurements.reserve(n_measurements);
+    }
     std::vector<WorkerTransition> transition_storage(max_transitions_per_run);
     size_t actual_sample_count = 0;
     size_t actual_transition_count = 0;
@@ -205,7 +281,8 @@ int main(int argc, char** argv) {
 
     // --- Main Experiment Loop ---
     for (int round = 0; round < rounds_opt->value(); ++round) {
-        std::cout << "========== STARTING ROUND " << round + 1 << " OF " << rounds_opt->value() << " ==========" << std::endl;
+        std::cout << "========== STARTING ROUND " << round + 1 << " OF " << rounds_opt->value() << " ==========" <<
+                std::endl;
 
         for (int core_to_test = 1; core_to_test < num_hardware_threads; ++core_to_test) {
             if (core_to_test == measurement_core) continue;
@@ -250,10 +327,11 @@ int main(int argc, char** argv) {
 
             // Write the raw data for this run to the file
             for (size_t i = 0; i < actual_sample_count; ++i) {
-                auto const& s = measurement_storage[i];
+                auto const &s = measurement_storage[i];
                 outfile << round << ","
                         << core_to_test << ","
-                        << std::chrono::duration_cast<std::chrono::nanoseconds>(s.timestamp.time_since_epoch()).count() << ","
+                        << std::chrono::duration_cast<std::chrono::nanoseconds>(s.timestamp.time_since_epoch()).
+                        count() << ","
                         << s.worker_state << ","
                         << s.mock_sensor_1 << ","
                         << s.mock_sensor_2 << "\n";

@@ -12,8 +12,6 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 include(cmake/flags.cmake)
 include(cmake/sanitizers.cmake)
 
-
-
 # Add the executable target from our source file
 add_executable(pm_reader main.cpp)
 
