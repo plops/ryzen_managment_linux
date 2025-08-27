@@ -236,10 +236,10 @@ int main(int argc, char **argv) {
     // --- Command Line Parsing ---
     OptionParser op("Allowed options");
     auto help_option = op.add<Switch>("h", "help", "produce help message");
-    auto period_opt = op.add<Value<int> >("p", "period", "Period of the worker task in milliseconds", 700);
+    auto period_opt = op.add<Value<int> >("p", "period", "Period of the worker task in milliseconds", 150);
     auto duty_cycle_opt = op.add<Value<int> >("d", "duty-cycle", "Duty cycle of the worker task in percent (10-90)",
                                               50);
-    auto cycles_opt = op.add<Value<int> >("c", "cycles", "How many busy/wait cycles to run per core", 3);
+    auto cycles_opt = op.add<Value<int> >("c", "cycles", "How many busy/wait cycles to run per core", 12);
     auto rounds_opt = op.add<Value<int> >("r", "rounds", "How many times to cycle through all cores", 1);
     auto outfile_opt = op.add<Value<std::string> >("o", "output", "Output filename for results",
                                                    "results/output.csv");
