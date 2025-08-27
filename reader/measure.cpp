@@ -278,8 +278,11 @@ int main(int argc, char **argv) {
 
     // File for final output
     std::ofstream outfile(outfile_opt->value());
-    outfile << "round,core_id,timestamp_ns,worker_state,sensor1,sensor2\n";
-
+    outfile << "round,core_id,timestamp_ns,worker_state"; //"sensor1,sensor2\n";
+    for (int i=0; i< n_measurements; i++) {
+        outfile << ",v" << std::to_string(i);
+    }
+    outfile << std::endl;
 
     // --- Main Experiment Loop ---
     for (int round = 0; round < rounds_opt->value(); ++round) {
@@ -335,11 +338,11 @@ int main(int argc, char **argv) {
                         << core_to_test << ","
                         << std::chrono::duration_cast<std::chrono::nanoseconds>(s.timestamp.time_since_epoch()).
                         count() << ","
-                        << s.worker_state << ",";
+                        << s.worker_state;
                 // << s.mock_sensor_1 << ","
                 // << s.mock_sensor_2 << "\n";
                 for (const auto &e: s.measurements) {
-                    outfile << e << ",";
+                    outfile << "," << e;
                 }
                 outfile << std::endl;
             }

@@ -16,10 +16,10 @@ inline bool set_thread_affinity(int core_id) {
 
 // The workload to be executed by the worker thread.
 // Designed to saturate integer execution units.
-inline void integer_alu_workload(uint64_t iterations) {
+inline void integer_alu_workload(int64_t iterations) {
     // Using volatile prevents the compiler from optimizing the loop away
-    volatile uint64_t a = 0, b = 1, c = 2, d = 3;
-    for (uint64_t i = 0; i < iterations; ++i) {
+    volatile int64_t a = 0, b = 1, c = 2, d = 3;
+    for (int64_t i = 0; i < iterations; ++i) {
         a += i;
         b += a;
         c -= b;
