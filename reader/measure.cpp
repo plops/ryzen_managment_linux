@@ -99,7 +99,7 @@ private:
 // These are used to signal start/stop without using mutexes
 std::atomic<bool> g_run_measurement = false;
 std::atomic<bool> g_run_worker = false;
-// std::atomic<int> g_worker_state = 0; // The single point of communication during a run
+std::atomic<int> g_worker_state = 0; // The single point of communication during a run
 
 // --- Thread Functions ---
 
@@ -121,7 +121,7 @@ void measurement_thread_func(int core_id,
     while (g_run_measurement.load(std::memory_order_acquire)) {
         // Record timestamp and state immediately
         TimePoint timestamp = Clock::now();
-        // int worker_state = g_worker_state.load(std::memory_order_relaxed);
+        int worker_state = g_worker_state.load(std::memory_order_relaxed);
 
         // Store in pre-allocated buffer
         if (sample_count < storage.size()) {
@@ -131,7 +131,7 @@ void measurement_thread_func(int core_id,
             // Read sensors
             pm_table_reader.read(charPtr);
             target.timestamp = timestamp;
-            // target.worker_state = worker_state;
+            target.worker_state = worker_state;
             sample_count++;
         }
         assert(sample_count < storage.size());
@@ -162,7 +162,7 @@ void worker_thread_func(int core_id,
 
     for (int i = 0; i < num_cycles; ++i) {
         // --- BUSY PHASE ---
-        // g_worker_state.store(1, std::memory_order_relaxed);
+        g_worker_state.store(1, std::memory_order_relaxed);
         if (transition_count < storage.size()) {
             storage[transition_count++] = {Clock::now(), 1};
         }
@@ -174,7 +174,7 @@ void worker_thread_func(int core_id,
         }
 
         // --- WAITING PHASE ---
-        // g_worker_state.store(0, std::memory_order_relaxed);
+        g_worker_state.store(0, std::memory_order_relaxed);
         if (transition_count < storage.size()) {
             storage[transition_count++] = {Clock::now(), 0};
         }
@@ -200,24 +200,11 @@ void analyze_and_print_results(int core_id,
     std::vector<double> wait_samples;
 
     for (size_t i = 0; i < sample_count; ++i) {
-        auto timestamp = measurements[i].timestamp;
-        auto thm = measurements[i].measurements[17];
-        // lookup timestamp in transitions
-        auto found = std::adjacent_find(transitions.begin(), transitions.end(),
-                                        [&](auto a, auto b) {
-                                            return a.timestamp <= timestamp && timestamp <= b.timestamp;
-                                        });
-        if (found == transitions.end()) {
-            break;
+        if (measurements[i].worker_state == 1) {
+            busy_samples.push_back(measurements[i].measurements[17]); // THM VALUE
         } else {
-            if (found->new_state == 1) {
-                // 17 is thm_value
-                busy_samples.push_back(measurements[i].measurements[17]);
-            } else {
-                wait_samples.push_back(measurements[i].measurements[17]);
-            }
+            wait_samples.push_back(measurements[i].measurements[17]);
         }
-
     }
 
     if (busy_samples.empty() || wait_samples.empty()) {
@@ -352,7 +339,7 @@ int main(int argc, char **argv) {
                 // << s.mock_sensor_1 << ","
                 // << s.mock_sensor_2 << "\n";
                 for (const auto &e: s.measurements) {
-                    outfile << e;
+                    outfile << e << ",";
                 }
                 outfile << std::endl;
             }
