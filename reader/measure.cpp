@@ -124,6 +124,8 @@ void measurement_thread_func(int core_id,
         int worker_state = g_worker_state.load(std::memory_order_relaxed);
 
         // Store in pre-allocated buffer
+        if (sample_count >= storage.size())
+            std::cerr << "Warning: sample count exceeds storage size=" << std::to_string(storage.size()) << std::endl;
         if (sample_count < storage.size()) {
             auto target = storage[sample_count];
             auto floatPtr = target.measurements.data();
@@ -226,13 +228,18 @@ void analyze_and_print_results(int core_id,
 int main(int argc, char **argv) {
     using namespace popl;
 
+    if (geteuid() != 0) {
+        std::cerr << "Warning: This program works better with root privileges to read from sysfs." << std::endl;
+        std::cerr << "Please run with sudo." << std::endl;
+    }
+
     // --- Command Line Parsing ---
     OptionParser op("Allowed options");
     auto help_option = op.add<Switch>("h", "help", "produce help message");
-    auto period_opt = op.add<Value<int> >("p", "period", "Period of the worker task in milliseconds", 100);
+    auto period_opt = op.add<Value<int> >("p", "period", "Period of the worker task in milliseconds", 30);
     auto duty_cycle_opt = op.add<Value<int> >("d", "duty-cycle", "Duty cycle of the worker task in percent (10-90)",
                                               50);
-    auto cycles_opt = op.add<Value<int> >("c", "cycles", "How many busy/wait cycles to run per core", 100);
+    auto cycles_opt = op.add<Value<int> >("c", "cycles", "How many busy/wait cycles to run per core", 133);
     auto rounds_opt = op.add<Value<int> >("r", "rounds", "How many times to cycle through all cores", 1);
     auto outfile_opt = op.add<Value<std::string> >("o", "output", "Output filename for results",
                                                    "results/output.csv");
@@ -260,8 +267,8 @@ int main(int argc, char **argv) {
 
     std::vector<MeasurementSample> measurement_storage;
     measurement_storage.reserve(max_samples_per_run);
-    for (auto &&e: measurement_storage) {
-        e.measurements.reserve(n_measurements);
+    for (size_t i = 0; i < max_samples_per_run; ++i) {
+        measurement_storage.emplace_back(n_measurements);
     }
     std::vector<WorkerTransition> transition_storage(max_transitions_per_run);
     size_t actual_sample_count = 0;
@@ -327,9 +334,9 @@ int main(int argc, char **argv) {
                         << std::chrono::duration_cast<std::chrono::nanoseconds>(s.timestamp.time_since_epoch()).
                         count() << ","
                         << s.worker_state << ",";
-                        // << s.mock_sensor_1 << ","
-                        // << s.mock_sensor_2 << "\n";
-                for (const auto& e : s.measurements) {
+                // << s.mock_sensor_1 << ","
+                // << s.mock_sensor_2 << "\n";
+                for (const auto &e: s.measurements) {
                     outfile << e;
                 }
                 outfile << std::endl;
