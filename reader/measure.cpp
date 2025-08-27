@@ -95,14 +95,6 @@ private:
     std::ifstream pm_table_stream;
 };
 
-
-void read_pm_table(float &val1, float &val2) {
-    // In a real scenario, this would read from sysfs or a driver
-    val1 = 10.0f;
-    val2 = 20.0f;
-}
-
-
 // --- Global Atomic Flags for Thread Synchronization ---
 // These are used to signal start/stop without using mutexes
 std::atomic<bool> g_run_measurement = false;
@@ -207,9 +199,10 @@ void analyze_and_print_results(int core_id,
 
     for (size_t i = 0; i < sample_count; ++i) {
         if (measurements[i].worker_state == 1) {
-            busy_samples.push_back(measurements[i].mock_sensor_1);
+            // 17 is thm_value
+            busy_samples.push_back(measurements[i].measurements[17]);
         } else {
-            wait_samples.push_back(measurements[i].mock_sensor_1);
+            wait_samples.push_back(measurements[i].measurements[17]);
         }
     }
 
@@ -221,8 +214,8 @@ void analyze_and_print_results(int core_id,
     double busy_mean = std::accumulate(busy_samples.begin(), busy_samples.end(), 0.0) / busy_samples.size();
     double wait_mean = std::accumulate(wait_samples.begin(), wait_samples.end(), 0.0) / wait_samples.size();
 
-    std::cout << "Mean sensor value while BUSY:   " << busy_mean << std::endl;
-    std::cout << "Mean sensor value while WAITING: " << wait_mean << std::endl;
+    std::cout << "Mean THM value while BUSY:   " << busy_mean << std::endl;
+    std::cout << "Mean THM value while WAITING: " << wait_mean << std::endl;
     std::cout << "Mean Correlation (Difference): " << busy_mean - wait_mean << std::endl;
     std::cout << "-----------------------\n" << std::endl;
 }
@@ -257,8 +250,8 @@ int main(int argc, char **argv) {
     std::cout << "System has " << num_hardware_threads << " hardware threads." << std::endl;
     std::cout << "Measurement thread will be pinned to core " << measurement_core << "." << std::endl;
 
-    PmTableReader reader;
-    const size_t n_measurements = reader.getPmTableSize() / sizeof(float);
+    PmTableReader pm_table_reader;
+    const size_t n_measurements = pm_table_reader.getPmTableSize() / sizeof(float);
 
     // --- Pre-allocation of Memory ---
     const size_t max_samples_per_run = (period_opt->value() / 1) * cycles_opt->value() + 1000;
@@ -299,7 +292,8 @@ int main(int argc, char **argv) {
 
             // --- Launch Threads for the current core test ---
             std::thread measurement_thread(measurement_thread_func, measurement_core,
-                                           std::ref(measurement_storage), std::ref(actual_sample_count));
+                                           std::ref(measurement_storage), std::ref(actual_sample_count),
+                                           std::ref(pm_table_reader));
 
             std::thread worker_thread(worker_thread_func, core_to_test,
                                       period_opt->value(), duty_cycle_opt->value(), cycles_opt->value(),
@@ -332,9 +326,13 @@ int main(int argc, char **argv) {
                         << core_to_test << ","
                         << std::chrono::duration_cast<std::chrono::nanoseconds>(s.timestamp.time_since_epoch()).
                         count() << ","
-                        << s.worker_state << ","
-                        << s.mock_sensor_1 << ","
-                        << s.mock_sensor_2 << "\n";
+                        << s.worker_state << ",";
+                        // << s.mock_sensor_1 << ","
+                        // << s.mock_sensor_2 << "\n";
+                for (const auto& e : s.measurements) {
+                    outfile << e;
+                }
+                outfile << std::endl;
             }
         }
     }
