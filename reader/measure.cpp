@@ -99,7 +99,7 @@ private:
 // These are used to signal start/stop without using mutexes
 std::atomic<bool> g_run_measurement = false;
 std::atomic<bool> g_run_worker = false;
-std::atomic<int> g_worker_state = 0; // The single point of communication during a run
+// std::atomic<int> g_worker_state = 0; // The single point of communication during a run
 
 // --- Thread Functions ---
 
@@ -121,21 +121,20 @@ void measurement_thread_func(int core_id,
     while (g_run_measurement.load(std::memory_order_acquire)) {
         // Record timestamp and state immediately
         TimePoint timestamp = Clock::now();
-        int worker_state = g_worker_state.load(std::memory_order_relaxed);
+        // int worker_state = g_worker_state.load(std::memory_order_relaxed);
 
         // Store in pre-allocated buffer
-        if (sample_count >= storage.size())
-            std::cerr << "Warning: sample count exceeds storage size=" << std::to_string(storage.size()) << std::endl;
         if (sample_count < storage.size()) {
-            auto target = storage[sample_count];
+            auto& target = storage[sample_count];
             auto floatPtr = target.measurements.data();
             auto charPtr = reinterpret_cast<char *>(floatPtr);
             // Read sensors
             pm_table_reader.read(charPtr);
             target.timestamp = timestamp;
-            target.worker_state = worker_state;
+            // target.worker_state = worker_state;
             sample_count++;
         }
+        assert(sample_count < storage.size());
 
         // Wait until the next 1ms interval
         next_sample_time += sample_period;
@@ -163,10 +162,11 @@ void worker_thread_func(int core_id,
 
     for (int i = 0; i < num_cycles; ++i) {
         // --- BUSY PHASE ---
-        g_worker_state.store(1, std::memory_order_relaxed);
+        // g_worker_state.store(1, std::memory_order_relaxed);
         if (transition_count < storage.size()) {
             storage[transition_count++] = {Clock::now(), 1};
         }
+        assert(transition_count < storage.size());
 
         auto busy_start = Clock::now();
         while ((Clock::now() - busy_start) < busy_duration) {
@@ -174,7 +174,7 @@ void worker_thread_func(int core_id,
         }
 
         // --- WAITING PHASE ---
-        g_worker_state.store(0, std::memory_order_relaxed);
+        // g_worker_state.store(0, std::memory_order_relaxed);
         if (transition_count < storage.size()) {
             storage[transition_count++] = {Clock::now(), 0};
         }
@@ -200,12 +200,24 @@ void analyze_and_print_results(int core_id,
     std::vector<double> wait_samples;
 
     for (size_t i = 0; i < sample_count; ++i) {
-        if (measurements[i].worker_state == 1) {
-            // 17 is thm_value
-            busy_samples.push_back(measurements[i].measurements[17]);
+        auto timestamp = measurements[i].timestamp;
+        auto thm = measurements[i].measurements[17];
+        // lookup timestamp in transitions
+        auto found = std::adjacent_find(transitions.begin(), transitions.end(),
+                                        [&](auto a, auto b) {
+                                            return a.timestamp <= timestamp && timestamp <= b.timestamp;
+                                        });
+        if (found == transitions.end()) {
+            break;
         } else {
-            wait_samples.push_back(measurements[i].measurements[17]);
+            if (found->new_state == 1) {
+                // 17 is thm_value
+                busy_samples.push_back(measurements[i].measurements[17]);
+            } else {
+                wait_samples.push_back(measurements[i].measurements[17]);
+            }
         }
+
     }
 
     if (busy_samples.empty() || wait_samples.empty()) {
@@ -229,7 +241,8 @@ int main(int argc, char **argv) {
     using namespace popl;
 
     if (geteuid() != 0) {
-        std::cerr << "Warning: This program works better with root privileges to read from sysfs." << std::endl;
+        std::cerr << "Warning: This program works better with root privileges to read from sysfs with low latency." <<
+                std::endl;
         std::cerr << "Please run with sudo." << std::endl;
     }
 
@@ -270,6 +283,8 @@ int main(int argc, char **argv) {
     for (size_t i = 0; i < max_samples_per_run; ++i) {
         measurement_storage.emplace_back(n_measurements);
     }
+    assert(measurement_storage.size() == max_samples_per_run);
+    assert(measurement_storage[0].measurements.size() == n_measurements);
     std::vector<WorkerTransition> transition_storage(max_transitions_per_run);
     size_t actual_sample_count = 0;
     size_t actual_transition_count = 0;
@@ -292,7 +307,7 @@ int main(int argc, char **argv) {
             // Reset state for the new run
             g_run_measurement = false;
             g_run_worker = false;
-            g_worker_state = 0;
+            // g_worker_state = 0;
             actual_sample_count = 0;
             actual_transition_count = 0;
 
