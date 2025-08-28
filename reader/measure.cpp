@@ -39,6 +39,41 @@ struct WorkerTransition {
     int new_state{}; // 0 for waiting, 1 for busy
 };
 
+// NEW: Structure to hold the binned data for an eye diagram.
+// This acts as a histogram where each bin corresponds to a 1ms time slot
+// relative to a rising edge event.
+struct EyeDiagramStorage {
+    // --- Configuration ---
+    static constexpr int WINDOW_BEFORE_MS = 50;  // How many ms to look back before the edge
+    static constexpr int WINDOW_AFTER_MS = 150; // How many ms to capture after the edge
+    static constexpr int NUM_BINS = WINDOW_BEFORE_MS + WINDOW_AFTER_MS;
+    // The index in our bins array that corresponds to t=0 (the rising edge)
+    static constexpr int ZERO_OFFSET_BINS = WINDOW_BEFORE_MS;
+
+    // --- Storage ---
+    // A vector of vectors. The outer vector represents the time bins.
+    // The inner vector stores all sensor values that fell into that time bin
+    // across all detected rising edge events.
+    std::vector<std::vector<float>> bins;
+    size_t event_count{0}; // How many rising edge events were captured
+
+    // --- Methods ---
+    EyeDiagramStorage() : bins(NUM_BINS) {
+        // Pre-allocate some space in the inner vectors to reduce reallocations during measurement
+        for(auto& bin : bins) {
+            bin.reserve(100); // Reserve space for 100 cycles/events
+        }
+    }
+
+    // Reset the storage for a new run
+    void clear() {
+        event_count = 0;
+        for (auto& bin : bins) {
+            bin.clear();
+        }
+    }
+};
+
 // --- PM Table Reader ---
 
 /** @brief Reads float array from sysfs pm_table
@@ -119,7 +154,8 @@ std::atomic<int> g_worker_state = 0; // The single point of communication during
 void measurement_thread_func(int core_id,
                              std::vector<MeasurementSample> &storage,
                              size_t &sample_count,
-                             PmTableReader &pm_table_reader) {
+                             PmTableReader &pm_table_reader,
+                             EyeDiagramStorage &eye_storage) { // NEW: Pass eye storage by reference
     if (!set_thread_affinity(core_id)) {
         std::cerr << "Warning: Failed to set measurement thread affinity to core " << core_id << std::endl;
     }
@@ -130,6 +166,13 @@ void measurement_thread_func(int core_id,
     const auto sample_period = std::chrono::milliseconds(1);
     auto next_sample_time = Clock::now();
     sample_count = 0;
+
+    // --- NEW: State machine and variables for eye diagram capture ---
+    enum class CaptureState { IDLE, CAPTURING };
+    CaptureState capture_state = CaptureState::IDLE;
+    int last_worker_state = 0;
+    TimePoint last_rise_time;
+    const int v17_sensor_index = 17; // The index of our target sensor
 
     while (g_run_measurement.load(std::memory_order_acquire)) {
         // Record timestamp and state immediately
@@ -148,6 +191,39 @@ void measurement_thread_func(int core_id,
             sample_count++;
         }
         assert(sample_count < storage.size());
+
+        // --- START OF DEAD TIME COMPUTATION ---
+        // This is where we perform the regridding/binning.
+
+        // 1. State Machine: Detect rising edge (0 -> 1 transition)
+        if (worker_state == 1 && last_worker_state == 0) {
+            // Rising edge detected! Start a new capture window.
+            capture_state = CaptureState::CAPTURING;
+            last_rise_time = timestamp;
+            eye_storage.event_count++;
+        }
+        last_worker_state = worker_state;
+
+        // 2. Binning: If we are in a capture window, bin this sample.
+        if (capture_state == CaptureState::CAPTURING) {
+            // Calculate time difference in milliseconds from the last rising edge
+            auto time_since_rise = std::chrono::duration_cast<std::chrono::milliseconds>(timestamp - last_rise_time);
+            long long time_delta_ms = time_since_rise.count();
+
+            // Convert the relative time into an index into our storage array
+            long long bin_index = time_delta_ms + EyeDiagramStorage::ZERO_OFFSET_BINS;
+
+            // Check if this sample falls within our defined window [-50ms, +150ms]
+            if (bin_index >= 0 && bin_index < EyeDiagramStorage::NUM_BINS) {
+                // It's in range, so store the sensor value in the correct time bin
+                const float v17_value = storage[sample_count - 1].measurements[v17_sensor_index];
+                eye_storage.bins[bin_index].push_back(v17_value);
+            } else if (bin_index >= EyeDiagramStorage::NUM_BINS) {
+                // We have moved past the capture window for this event, reset to idle.
+                capture_state = CaptureState::IDLE;
+            }
+        }
+        // --- END OF DEAD TIME COMPUTATION ---
 
         // Wait until the next 1ms interval
         next_sample_time += sample_period;
@@ -200,14 +276,11 @@ void worker_thread_func(int core_id,
 // --- Analysis Function ---
 void analyze_and_print_results(int core_id,
                                const std::vector<MeasurementSample> &measurements, size_t sample_count,
-                               const std::vector<WorkerTransition> &transitions, size_t transition_count) {
+                               const std::vector<WorkerTransition> &transitions, size_t transition_count,
+                               const EyeDiagramStorage &eye_storage) { // NEW: Pass eye storage
     std::cout << "--- Analyzing Core " << core_id << " ---" << std::endl;
     std::cout << "Collected " << sample_count << " measurement samples." << std::endl;
     std::cout << "Recorded " << transition_count << " worker transitions." << std::endl;
-
-    // This is where you would implement your full statistics (mean, stddev, median correlation)
-    // and eye-diagram binning logic.
-    // For this example, we'll just show a simple analysis.
 
     std::vector<double> busy_samples;
     std::vector<double> wait_samples;
@@ -231,6 +304,35 @@ void analyze_and_print_results(int core_id,
     std::cout << "Mean THM value while BUSY:   " << busy_mean << std::endl;
     std::cout << "Mean THM value while WAITING: " << wait_mean << std::endl;
     std::cout << "Mean Correlation (Difference): " << busy_mean - wait_mean << std::endl;
+
+    // --- NEW: Eye Diagram Median Calculation ---
+    std::cout << "\n--- Eye Diagram Median Trace (v17) ---" << std::endl;
+    std::cout << "Captured " << eye_storage.event_count << " rising edge events." << std::endl;
+    std::cout << "Time(ms)\tMedian\tSamples" << std::endl;
+
+    for (int i = 0; i < EyeDiagramStorage::NUM_BINS; ++i) {
+        const auto& bin = eye_storage.bins[i];
+        if (!bin.empty()) {
+            // Calculate the time relative to the rising edge for this bin
+            int relative_time_ms = i - EyeDiagramStorage::ZERO_OFFSET_BINS;
+
+            // To find the median, we need a sorted copy of the bin's data
+            std::vector<float> sorted_bin = bin;
+            std::sort(sorted_bin.begin(), sorted_bin.end());
+
+            float median;
+            size_t n = sorted_bin.size();
+            if (n % 2 == 0) {
+                median = 0.5f * (sorted_bin[n/2 - 1] + sorted_bin[n/2]);
+            } else {
+                median = sorted_bin[n/2];
+            }
+
+            std::cout << relative_time_ms << "\t\t"
+                      << std::fixed << std::setprecision(4) << median << "\t"
+                      << bin.size() << std::endl;
+        }
+    }
     std::cout << "-----------------------\n" << std::endl;
 }
 
@@ -289,6 +391,9 @@ int main(int argc, char **argv) {
     size_t actual_sample_count = 0;
     size_t actual_transition_count = 0;
 
+    // NEW: Instantiate the storage for our eye diagram
+    EyeDiagramStorage v17_eye_storage;
+
     // File for final output
     std::ofstream outfile(outfile_opt->value());
     outfile << "round,core_id,timestamp_ns,worker_state"; //"sensor1,sensor2\n";
@@ -313,12 +418,13 @@ int main(int argc, char **argv) {
             // g_worker_state = 0;
             actual_sample_count = 0;
             actual_transition_count = 0;
-
+            v17_eye_storage.clear(); // NEW: Clear eye diagram data for the new core run
 
             // --- Launch Threads for the current core test ---
             std::thread measurement_thread(measurement_thread_func, measurement_core,
                                            std::ref(measurement_storage), std::ref(actual_sample_count),
-                                           std::ref(pm_table_reader));
+                                           std::ref(pm_table_reader),
+                                           std::ref(v17_eye_storage)); // NEW: Pass storage to thread
 
             std::thread worker_thread(worker_thread_func, core_to_test,
                                       period_opt->value(), duty_cycle_opt->value(), cycles_opt->value(),
@@ -342,7 +448,8 @@ int main(int argc, char **argv) {
 
             // --- Analyze and Store Results (between core runs) ---
             analyze_and_print_results(core_to_test, measurement_storage, actual_sample_count,
-                                      transition_storage, actual_transition_count);
+                                      transition_storage, actual_transition_count,
+                                      v17_eye_storage); // NEW: Pass storage to analysis function
 
             // Write the raw data for this run to the file
             for (size_t i = 0; i < actual_sample_count; ++i) {
