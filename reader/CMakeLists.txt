@@ -15,9 +15,6 @@ include(cmake/sanitizers.cmake)
 # Add the executable target from our source file
 add_executable(pm_reader main.cpp)
 
-# Enable common compiler warnings for better code quality
-target_compile_options(pm_reader PRIVATE -Wall -Wextra -pedantic)
-
 # Ensure the pthreads library is linked for std::thread support
 find_package(Threads REQUIRED)
 target_link_libraries(pm_reader PRIVATE Threads::Threads)
