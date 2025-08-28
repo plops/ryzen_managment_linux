@@ -11,6 +11,43 @@
 #include <memory>
 #include <cassert>
 
+// --- NEW: Helper function for calculating a trimmed mean ---
+
+/**
+ * @brief Calculates the trimmed mean of a vector of floats.
+ *
+ * This function sorts the data, removes a specified percentage of elements
+ * from both the beginning and the end of the sorted vector, and then
+ * calculates the mean of the remaining elements.
+ *
+ * @param data The vector of data points. The function will create a sorted copy.
+ * @param trim_percentage The percentage of data to trim from EACH end (e.g., 10.0 for 10%).
+ * @return The calculated trimmed mean, or 0.0 if the vector is empty after trimming.
+ */
+float calculate_trimmed_mean(const std::vector<float>& data, float trim_percentage) {
+    if (data.empty()) {
+        return 0.0f;
+    }
+
+    std::vector<float> sorted_data = data;
+    std::sort(sorted_data.begin(), sorted_data.end());
+
+    size_t trim_count = static_cast<size_t>((sorted_data.size() * trim_percentage) / 100.0);
+
+    if (2 * trim_count >= sorted_data.size()) {
+        // If trimming would remove all elements, return the median instead as a fallback
+        return sorted_data[sorted_data.size() / 2];
+    }
+
+    auto first = sorted_data.begin() + trim_count;
+    auto last = sorted_data.end() - trim_count;
+    size_t count_to_average = std::distance(first, last);
+
+    double sum = std::accumulate(first, last, 0.0);
+
+    return static_cast<float>(sum / count_to_average);
+}
+
 #include "popl.hpp"
 #include "workloads.hpp"
 
@@ -277,7 +314,7 @@ void worker_thread_func(int core_id,
 void analyze_and_print_results(int core_id,
                                const std::vector<MeasurementSample> &measurements, size_t sample_count,
                                const std::vector<WorkerTransition> &transitions, size_t transition_count,
-                               const EyeDiagramStorage &eye_storage) { // NEW: Pass eye storage
+                               const EyeDiagramStorage &eye_storage) {
     std::cout << "--- Analyzing Core " << core_id << " ---" << std::endl;
     std::cout << "Collected " << sample_count << " measurement samples." << std::endl;
     std::cout << "Recorded " << transition_count << " worker transitions." << std::endl;
@@ -305,7 +342,7 @@ void analyze_and_print_results(int core_id,
     std::cout << "Mean THM value while WAITING: " << wait_mean << std::endl;
     std::cout << "Mean Correlation (Difference): " << busy_mean - wait_mean << std::endl;
 
-    // --- NEW: Eye Diagram Median Calculation ---
+    // --- Eye Diagram Median Calculation ---
     std::cout << "\n--- Eye Diagram Median Trace (v17) ---" << std::endl;
     std::cout << "Captured " << eye_storage.event_count << " rising edge events." << std::endl;
     std::cout << "Time(ms)\tMedian\tSamples" << std::endl;
@@ -330,6 +367,27 @@ void analyze_and_print_results(int core_id,
 
             std::cout << relative_time_ms << "\t\t"
                       << std::fixed << std::setprecision(4) << median << "\t"
+                      << bin.size() << std::endl;
+        }
+    }
+    std::cout << "-----------------------\n" << std::endl;
+
+    // --- Eye Diagram Trimmed Mean Trace Calculation ---
+    std::cout << "\n--- Eye Diagram Trimmed Mean (10%) Trace (v17) ---" << std::endl;
+    std::cout << "Captured " << eye_storage.event_count << " rising edge events." << std::endl;
+    std::cout << "Time(ms)\tTrimmedMean\tSamples" << std::endl;
+
+    const float trim_percent = 10.0f;
+
+    for (int i = 0; i < EyeDiagramStorage::NUM_BINS; ++i) {
+        const auto& bin = eye_storage.bins[i];
+        if (!bin.empty()) {
+            int relative_time_ms = i - EyeDiagramStorage::ZERO_OFFSET_BINS;
+
+            float robust_mean = calculate_trimmed_mean(bin, trim_percent);
+
+            std::cout << relative_time_ms << "\t\t"
+                      << std::fixed << std::setprecision(4) << robust_mean << "\t"
                       << bin.size() << std::endl;
         }
     }
