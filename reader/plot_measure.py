@@ -53,7 +53,7 @@ n_cores = len(core_ids)
 # fig, axes = plt.subplots(n_cores, 1, figsize=(10, 3 * n_cores))  # removed sharex=True
 # if n_cores == 1:
 #     axes = [axes]
-#
+
 # for idx, core_id in enumerate(core_ids):
 #     core_df = run_df[run_df['core_id'] == core_id]
 #     ax = axes[idx]
