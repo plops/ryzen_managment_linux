@@ -43,7 +43,7 @@ if (CMAKE_BUILD_TYPE STREQUAL "Release")
 -fdevirtualize-speculatively
 -fdse
 -fearly-inlining
--fno-exceptions
+-fexceptions
 -fexpensive-optimizations
 -ffast-math
 -ffinite-loops
@@ -124,7 +124,7 @@ if (CMAKE_BUILD_TYPE STREQUAL "Release")
 -fopt-info
 -foptimize-sibling-calls
 -foptimize-strlen
--fpack-struct
+#-fpack-struct
 -fpartial-inlining
 -fpeel-loops
 -fpeephole
