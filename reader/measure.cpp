@@ -28,6 +28,9 @@ struct MeasurementSample {
     TimePoint timestamp{};
     int worker_state{0}; // 0 for waiting, 1 for busy
     std::vector<float> measurements;
+    std::vector<uint64_t> eye_off0;
+    std::vector<uint64_t> eye_on;
+    std::vector<uint64_t> eye_off1;
 };
 
 // Represents a state transition event from the worker thread
@@ -100,6 +103,16 @@ private:
 std::atomic<bool> g_run_measurement = false;
 std::atomic<bool> g_run_worker = false;
 std::atomic<int> g_worker_state = 0; // The single point of communication during a run
+
+/*
+ * a state machine to help capture the eye diagram
+ * the internal states are (at least these active states): off_0, on, off_2
+ * in these active states we bin the incoming data into
+ * everytime g_workers state transitions from 0 to 1 we
+ * will store into storage[].measurements.eye_{off0,on,off1}
+ * these storage containers act like a 2D histogram, containing
+ * the number of observed measurements at each 1ms
+ */
 
 // --- Thread Functions ---
 
@@ -239,7 +252,7 @@ int main(int argc, char **argv) {
     auto period_opt = op.add<Value<int> >("p", "period", "Period of the worker task in milliseconds", 150);
     auto duty_cycle_opt = op.add<Value<int> >("d", "duty-cycle", "Duty cycle of the worker task in percent (10-90)",
                                               50);
-    auto cycles_opt = op.add<Value<int> >("c", "cycles", "How many busy/wait cycles to run per core", 12);
+    auto cycles_opt = op.add<Value<int> >("c", "cycles", "How many busy/wait cycles to run per core", 122);
     auto rounds_opt = op.add<Value<int> >("r", "rounds", "How many times to cycle through all cores", 1);
     auto outfile_opt = op.add<Value<std::string> >("o", "output", "Output filename for results",
                                                    "results/output.csv");
