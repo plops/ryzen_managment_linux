@@ -11,164 +11,14 @@
 #include <memory>
 #include <cassert>
 
-// --- NEW: Helper function for calculating a trimmed mean ---
-
-/**
- * @brief Calculates the trimmed mean of a vector of floats.
- *
- * This function sorts the data, removes a specified percentage of elements
- * from both the beginning and the end of the sorted vector, and then
- * calculates the mean of the remaining elements.
- *
- * @param data The vector of data points. The function will create a sorted copy.
- * @param trim_percentage The percentage of data to trim from EACH end (e.g., 10.0 for 10%).
- * @return The calculated trimmed mean, or 0.0 if the vector is empty after trimming.
- */
-float calculate_trimmed_mean(const std::vector<float>& data, float trim_percentage) {
-    if (data.empty()) {
-        return 0.0f;
-    }
-
-    std::vector<float> sorted_data = data;
-    std::sort(sorted_data.begin(), sorted_data.end());
-
-    size_t trim_count = static_cast<size_t>((sorted_data.size() * trim_percentage) / 100.0);
-
-    if (2 * trim_count >= sorted_data.size()) {
-        // If trimming would remove all elements, return the median instead as a fallback
-        return sorted_data[sorted_data.size() / 2];
-    }
-
-    auto first = sorted_data.begin() + trim_count;
-    auto last = sorted_data.end() - trim_count;
-    size_t count_to_average = std::distance(first, last);
-
-    double sum = std::accumulate(first, last, 0.0);
-
-    return static_cast<float>(sum / count_to_average);
-}
-
 #include "popl.hpp"
 #include "workloads.hpp"
 
-// Use steady_clock for monotonic time measurements
-using Clock = std::chrono::steady_clock;
-using TimePoint = std::chrono::time_point<Clock>;
-using Duration = std::chrono::duration<double, std::nano>;
+#include "measurement_types.hpp"
+#include "pm_table_reader.hpp"
+#include "eye_diagram.hpp"
+#include "eye_capturer.hpp"
 
-// --- Data Structures for Pre-allocated Storage ---
-
-// Represents a single sample from the measurement thread
-struct MeasurementSample {
-    explicit MeasurementSample(size_t n_measurements) : measurements(n_measurements) {
-    };
-    TimePoint timestamp{};
-    int worker_state{0}; // 0 for waiting, 1 for busy
-    std::vector<float> measurements;
-    std::vector<uint64_t> eye_off0;
-    std::vector<uint64_t> eye_on;
-    std::vector<uint64_t> eye_off1;
-};
-
-// Represents a state transition event from the worker thread
-struct WorkerTransition {
-    TimePoint timestamp;
-    int new_state{}; // 0 for waiting, 1 for busy
-};
-
-// NEW: Structure to hold the binned data for an eye diagram.
-// This acts as a histogram where each bin corresponds to a 1ms time slot
-// relative to a rising edge event.
-struct EyeDiagramStorage {
-    // --- Configuration ---
-    static constexpr int WINDOW_BEFORE_MS = 50;  // How many ms to look back before the edge
-    static constexpr int WINDOW_AFTER_MS = 150; // How many ms to capture after the edge
-    static constexpr int NUM_BINS = WINDOW_BEFORE_MS + WINDOW_AFTER_MS;
-    // The index in our bins array that corresponds to t=0 (the rising edge)
-    static constexpr int ZERO_OFFSET_BINS = WINDOW_BEFORE_MS;
-
-    // --- Storage ---
-    // A vector of vectors. The outer vector represents the time bins.
-    // The inner vector stores all sensor values that fell into that time bin
-    // across all detected rising edge events.
-    std::vector<std::vector<float>> bins;
-    size_t event_count{0}; // How many rising edge events were captured
-
-    // --- Methods ---
-    EyeDiagramStorage() : bins(NUM_BINS) {
-        // Pre-allocate some space in the inner vectors to reduce reallocations during measurement
-        for(auto& bin : bins) {
-            bin.reserve(100); // Reserve space for 100 cycles/events
-        }
-    }
-
-    // Reset the storage for a new run
-    void clear() {
-        event_count = 0;
-        for (auto& bin : bins) {
-            bin.clear();
-        }
-    }
-};
-
-// --- PM Table Reader ---
-
-/** @brief Reads float array from sysfs pm_table
- *  Constructor detects the size of the pm_table
- *  read reads all the elements into a char pointer and seeks back for next iteration
- */
-class PmTableReader {
-    const char *PM_TABLE_PATH = "/sys/kernel/ryzen_smu_drv/pm_table";
-    const char *PM_TABLE_SIZE_PATH = "/sys/kernel/ryzen_smu_drv/pm_table_size";
-
-public:
-    PmTableReader()
-        : pm_table_size{read_sysfs_uint64(PM_TABLE_SIZE_PATH)}, // First, determine the exact size of the pm_table
-          pm_table_stream(PM_TABLE_PATH, std::ios::binary) {
-        if (pm_table_size == 0 || pm_table_size > 16384) {
-            // Sanity check size
-            std::cerr << "Error: Invalid pm_table size reported: " << pm_table_size << " bytes." << std::endl;
-        }
-        std::cout << "Detected pm_table size: " << pm_table_size << " bytes." << std::endl;
-        if (!pm_table_stream) {
-            std::cerr << "Error: Failed to open " << PM_TABLE_PATH << "." << std::endl;
-            std::cerr << "Is the ryzen_smu kernel module loaded?" << std::endl;
-        }
-        pm_table_stream.seekg(0); // Seek to the beginning for each read
-    }
-
-    uint64_t getPmTableSize() const {
-        return pm_table_size;
-    }
-
-    void read(char *buffer) {
-        pm_table_stream.read(buffer, getPmTableSize());
-        pm_table_stream.seekg(0); // Seek to the beginning for next read
-    }
-
-private:
-    /**
-    * @brief Reads a 64-bit unsigned integer from a sysfs file.
-    * @param path The path to the sysfs file.
-    * @return The uint64_t value read from the file.
-    * @throws std::runtime_error if the file cannot be opened or read.
-    */
-    uint64_t read_sysfs_uint64(const std::string &path) {
-        std::ifstream file(path, std::ios::binary);
-        if (!file.is_open()) {
-            throw std::runtime_error("Failed to open sysfs file: " + path);
-        }
-        uint64_t value = 0;
-        file.read(reinterpret_cast<char *>(&value), sizeof(value));
-        if (!file) {
-            throw std::runtime_error("Failed to read from sysfs file: " + path);
-        }
-        return value;
-    }
-
-    uint64_t pm_table_size;
-    std::ifstream pm_table_stream;
-};
 
 // --- Global Atomic Flags for Thread Synchronization ---
 // These are used to signal start/stop without using mutexes
@@ -192,7 +42,7 @@ void measurement_thread_func(int core_id,
                              std::vector<MeasurementSample> &storage,
                              size_t &sample_count,
                              PmTableReader &pm_table_reader,
-                             EyeDiagramStorage &eye_storage) { // NEW: Pass eye storage by reference
+                             EyeCapturer &capturer) {
     if (!set_thread_affinity(core_id)) {
         std::cerr << "Warning: Failed to set measurement thread affinity to core " << core_id << std::endl;
     }
@@ -203,13 +53,6 @@ void measurement_thread_func(int core_id,
     const auto sample_period = std::chrono::milliseconds(1);
     auto next_sample_time = Clock::now();
     sample_count = 0;
-
-    // --- NEW: State machine and variables for eye diagram capture ---
-    enum class CaptureState { IDLE, CAPTURING };
-    CaptureState capture_state = CaptureState::IDLE;
-    int last_worker_state = 0;
-    TimePoint last_rise_time;
-    const int v17_sensor_index = 17; // The index of our target sensor
 
     while (g_run_measurement.load(std::memory_order_acquire)) {
         // Record timestamp and state immediately
@@ -225,44 +68,12 @@ void measurement_thread_func(int core_id,
             pm_table_reader.read(charPtr);
             target.timestamp = timestamp;
             target.worker_state = worker_state;
+            // process into eye capturer (bins per sensor)
+            capturer.process_sample(timestamp, worker_state, target.measurements);
             sample_count++;
         }
         assert(sample_count < storage.size());
 
-        // --- START OF DEAD TIME COMPUTATION ---
-        // This is where we perform the regridding/binning.
-
-        // 1. State Machine: Detect rising edge (0 -> 1 transition)
-        if (worker_state == 1 && last_worker_state == 0) {
-            // Rising edge detected! Start a new capture window.
-            capture_state = CaptureState::CAPTURING;
-            last_rise_time = timestamp;
-            eye_storage.event_count++;
-        }
-        last_worker_state = worker_state;
-
-        // 2. Binning: If we are in a capture window, bin this sample.
-        if (capture_state == CaptureState::CAPTURING) {
-            // Calculate time difference in milliseconds from the last rising edge
-            auto time_since_rise = std::chrono::duration_cast<std::chrono::milliseconds>(timestamp - last_rise_time);
-            long long time_delta_ms = time_since_rise.count();
-
-            // Convert the relative time into an index into our storage array
-            long long bin_index = time_delta_ms + EyeDiagramStorage::ZERO_OFFSET_BINS;
-
-            // Check if this sample falls within our defined window [-50ms, +150ms]
-            if (bin_index >= 0 && bin_index < EyeDiagramStorage::NUM_BINS) {
-                // It's in range, so store the sensor value in the correct time bin
-                const float v17_value = storage[sample_count - 1].measurements[v17_sensor_index];
-                eye_storage.bins[bin_index].push_back(v17_value);
-            } else if (bin_index >= EyeDiagramStorage::NUM_BINS) {
-                // We have moved past the capture window for this event, reset to idle.
-                capture_state = CaptureState::IDLE;
-            }
-        }
-        // --- END OF DEAD TIME COMPUTATION ---
-
-        // Wait until the next 1ms interval
         next_sample_time += sample_period;
         std::this_thread::sleep_until(next_sample_time);
     }
@@ -309,6 +120,23 @@ void worker_thread_func(int core_id,
     }
 }
 
+// Add trimmed mean helper used by analyze_and_print_results
+static float calculate_trimmed_mean(const std::vector<float>& data, float trim_percentage) {
+    if (data.empty()) return 0.0f;
+    std::vector<float> sorted = data;
+    std::sort(sorted.begin(), sorted.end());
+    size_t n = sorted.size();
+    size_t trim_count = static_cast<size_t>((trim_percentage / 100.0f) * n);
+    if (2 * trim_count >= n) {
+        // Not enough elements after trimming; return median as fallback
+        return sorted[n / 2];
+    }
+    auto first = sorted.begin() + trim_count;
+    auto last = sorted.end() - trim_count;
+    double sum = std::accumulate(first, last, 0.0);
+    size_t count = std::distance(first, last);
+    return static_cast<float>(sum / (count ? count : 1));
+}
 
 // --- Analysis Function ---
 void analyze_and_print_results(int core_id,
@@ -319,80 +147,62 @@ void analyze_and_print_results(int core_id,
     std::cout << "Collected " << sample_count << " measurement samples." << std::endl;
     std::cout << "Recorded " << transition_count << " worker transitions." << std::endl;
 
+    // compute simple busy/wait means for sensor 17 as before (unchanged)
     std::vector<double> busy_samples;
     std::vector<double> wait_samples;
-
     for (size_t i = 0; i < sample_count; ++i) {
-        if (measurements[i].worker_state == 1) {
-            busy_samples.push_back(measurements[i].measurements[17]); // THM VALUE
-        } else {
-            wait_samples.push_back(measurements[i].measurements[17]);
-        }
+        if (measurements[i].worker_state == 1) busy_samples.push_back(measurements[i].measurements[17]);
+        else wait_samples.push_back(measurements[i].measurements[17]);
     }
-
     if (busy_samples.empty() || wait_samples.empty()) {
         std::cout << "Not enough data to compute statistics." << std::endl;
-        return;
+    } else {
+        double busy_mean = std::accumulate(busy_samples.begin(), busy_samples.end(), 0.0) / busy_samples.size();
+        double wait_mean = std::accumulate(wait_samples.begin(), wait_samples.end(), 0.0) / wait_samples.size();
+        std::cout << "Mean THM value while BUSY:   " << busy_mean << std::endl;
+        std::cout << "Mean THM value while WAITING: " << wait_mean << std::endl;
+        std::cout << "Mean Correlation (Difference): " << busy_mean - wait_mean << std::endl;
     }
 
-    double busy_mean = std::accumulate(busy_samples.begin(), busy_samples.end(), 0.0) / busy_samples.size();
-    double wait_mean = std::accumulate(wait_samples.begin(), wait_samples.end(), 0.0) / wait_samples.size();
-
-    std::cout << "Mean THM value while BUSY:   " << busy_mean << std::endl;
-    std::cout << "Mean THM value while WAITING: " << wait_mean << std::endl;
-    std::cout << "Mean Correlation (Difference): " << busy_mean - wait_mean << std::endl;
-
-    // --- Eye Diagram Median Calculation ---
-    std::cout << "\n--- Eye Diagram Median Trace (v17) ---" << std::endl;
-    std::cout << "Captured " << eye_storage.event_count << " rising edge events." << std::endl;
-    std::cout << "Time(ms)\tMedian\tSamples" << std::endl;
-
-    for (int i = 0; i < EyeDiagramStorage::NUM_BINS; ++i) {
-        const auto& bin = eye_storage.bins[i];
-        if (!bin.empty()) {
-            // Calculate the time relative to the rising edge for this bin
-            int relative_time_ms = i - EyeDiagramStorage::ZERO_OFFSET_BINS;
-
-            // To find the median, we need a sorted copy of the bin's data
-            std::vector<float> sorted_bin = bin;
-            std::sort(sorted_bin.begin(), sorted_bin.end());
-
-            float median;
-            size_t n = sorted_bin.size();
-            if (n % 2 == 0) {
-                median = 0.5f * (sorted_bin[n/2 - 1] + sorted_bin[n/2]);
-            } else {
-                median = sorted_bin[n/2];
-            }
-
-            std::cout << relative_time_ms << "\t\t"
-                      << std::fixed << std::setprecision(4) << median << "\t"
-                      << bin.size() << std::endl;
-        }
-    }
-    std::cout << "-----------------------\n" << std::endl;
-
-    // --- Eye Diagram Trimmed Mean Trace Calculation ---
-    std::cout << "\n--- Eye Diagram Trimmed Mean (10%) Trace (v17) ---" << std::endl;
-    std::cout << "Captured " << eye_storage.event_count << " rising edge events." << std::endl;
-    std::cout << "Time(ms)\tTrimmedMean\tSamples" << std::endl;
-
+    // --- Eye Diagram output for every sensor ---
     const float trim_percent = 10.0f;
+    size_t n_sensors = eye_storage.bins.empty() ? 0 : eye_storage.bins[0].size();
 
-    for (int i = 0; i < EyeDiagramStorage::NUM_BINS; ++i) {
-        const auto& bin = eye_storage.bins[i];
-        if (!bin.empty()) {
-            int relative_time_ms = i - EyeDiagramStorage::ZERO_OFFSET_BINS;
+    for (size_t sensor = 0; sensor < n_sensors; ++sensor) {
+        std::cout << "\n--- Sensor v" << sensor << " Eye Diagram (Median) ---" << std::endl;
+        std::cout << "Captured " << eye_storage.event_count << " rising edge events." << std::endl;
+        std::cout << "Time(ms)\tMedian\tSamples" << std::endl;
+        for (int i = 0; i < EyeDiagramStorage::NUM_BINS; ++i) {
+            const auto &bin = eye_storage.bins[i][sensor];
+            if (!bin.empty()) {
+                int relative_time_ms = i - EyeDiagramStorage::ZERO_OFFSET_BINS;
+                std::vector<float> sorted_bin = bin;
+                std::sort(sorted_bin.begin(), sorted_bin.end());
+                float median;
+                size_t n = sorted_bin.size();
+                if (n % 2 == 0) median = 0.5f * (sorted_bin[n/2 - 1] + sorted_bin[n/2]);
+                else median = sorted_bin[n/2];
+                std::cout << relative_time_ms << "\t\t" << std::fixed << std::setprecision(4) << median
+                          << "\t" << bin.size() << std::endl;
+            }
+        }
 
-            float robust_mean = calculate_trimmed_mean(bin, trim_percent);
-
-            std::cout << relative_time_ms << "\t\t"
-                      << std::fixed << std::setprecision(4) << robust_mean << "\t"
-                      << bin.size() << std::endl;
+        std::cout << "\n--- Sensor v" << sensor << " Eye Diagram (TrimmedMean " << trim_percent << "%) ---" << std::endl;
+        std::cout << "Time(ms)\tTrimmedMean\tSamples" << std::endl;
+        for (int i = 0; i < EyeDiagramStorage::NUM_BINS; ++i) {
+            const auto &bin = eye_storage.bins[i][sensor];
+            if (!bin.empty()) {
+                int relative_time_ms = i - EyeDiagramStorage::ZERO_OFFSET_BINS;
+                float robust_mean = calculate_trimmed_mean(bin, trim_percent);
+                std::cout << relative_time_ms << "\t\t" << std::fixed << std::setprecision(4) << robust_mean
+                          << "\t" << bin.size() << std::endl;
+            }
         }
     }
     std::cout << "-----------------------\n" << std::endl;
 }
+
+
 
 
 // --- Main Program Logic ---
@@ -450,7 +260,9 @@ int main(int argc, char **argv) {
     size_t actual_transition_count = 0;
 
     // NEW: Instantiate the storage for our eye diagram
-    EyeDiagramStorage v17_eye_storage;
+    size_t expected_events = 122; // use cycles_opt value in original code; kept simple here
+    EyeDiagramStorage eye_storage(n_measurements, expected_events);
+    EyeCapturer capturer(eye_storage, n_measurements);
 
     // File for final output
     std::ofstream outfile(outfile_opt->value());
@@ -476,13 +288,13 @@ int main(int argc, char **argv) {
             // g_worker_state = 0;
             actual_sample_count = 0;
             actual_transition_count = 0;
-            v17_eye_storage.clear(); // NEW: Clear eye diagram data for the new core run
+            eye_storage.clear(); // call per run to reset while keeping allocation
 
             // --- Launch Threads for the current core test ---
             std::thread measurement_thread(measurement_thread_func, measurement_core,
                                            std::ref(measurement_storage), std::ref(actual_sample_count),
                                            std::ref(pm_table_reader),
-                                           std::ref(v17_eye_storage)); // NEW: Pass storage to thread
+                                           std::ref(capturer));
 
             std::thread worker_thread(worker_thread_func, core_to_test,
                                       period_opt->value(), duty_cycle_opt->value(), cycles_opt->value(),
@@ -507,7 +319,7 @@ int main(int argc, char **argv) {
             // --- Analyze and Store Results (between core runs) ---
             analyze_and_print_results(core_to_test, measurement_storage, actual_sample_count,
                                       transition_storage, actual_transition_count,
-                                      v17_eye_storage); // NEW: Pass storage to analysis function
+                                      eye_storage); // NEW: Pass storage to analysis function
 
             // Write the raw data for this run to the file
             for (size_t i = 0; i < actual_sample_count; ++i) {
