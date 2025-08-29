@@ -1,11 +1,21 @@
-// src/workloads.hpp
+/** @file workloads.hpp
+ *  @brief Lightweight helpers for setting thread affinity and running a CPU workload.
+ */
+
 #pragma once
 
 #include <cstdint>
 #include <thread>
 #include <pthread.h> // For Linux-specific thread affinity
 
-// Simple helper to pin the calling thread to a specific CPU core
+/**
+ * @brief Pin the calling thread to a specific CPU core.
+ *
+ * Internally uses pthread_setaffinity_np. Returns true on success.
+ *
+ * @param core_id Logical CPU core id to bind to.
+ * @return True if the affinity was set successfully.
+ */
 inline bool set_thread_affinity(int core_id) {
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
@@ -14,8 +24,14 @@ inline bool set_thread_affinity(int core_id) {
     return pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset) == 0;
 }
 
-// The workload to be executed by the worker thread.
-// Designed to saturate integer execution units.
+/**
+ * @brief Small integer workload intended to keep integer ALUs busy.
+ *
+ * The function performs a tight loop using volatile variables to prevent compiler
+ * optimizations that would otherwise remove the work.
+ *
+ * @param iterations Number of loop iterations to execute.
+ */
 inline void integer_alu_workload(int64_t iterations) {
     // Using volatile prevents the compiler from optimizing the loop away
     volatile int64_t a = 0, b = 1, c = 2, d = 3;

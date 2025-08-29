@@ -19,8 +19,14 @@ add_executable(pm_reader main.cpp)
 find_package(Threads REQUIRED)
 target_link_libraries(pm_reader PRIVATE Threads::Threads)
 
+# Build pm_measure with split sources
+add_executable(pm_measure
+    measure.cpp
+    pm_table_reader.cpp
+    eye_diagram.cpp
+    eye_capturer.cpp
+)
 
-add_executable(pm_measure measure.cpp)
 target_link_libraries(pm_measure PRIVATE Threads::Threads)
 file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/results)
 
