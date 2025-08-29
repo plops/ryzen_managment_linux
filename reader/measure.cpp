@@ -296,7 +296,7 @@ int main(int argc, char **argv) {
     auto period_opt = op.add<Value<int> >("p", "period", "Period of the worker task in milliseconds", 150);
     auto duty_cycle_opt = op.add<Value<int> >("d", "duty-cycle", "Duty cycle of the worker task in percent (10-90)",
                                               50);
-    auto cycles_opt = op.add<Value<int> >("c", "cycles", "How many busy/wait cycles to run per core", 122);
+    auto cycles_opt = op.add<Value<int> >("c", "cycles", "How many busy/wait cycles to run per core", 13);
     auto rounds_opt = op.add<Value<int> >("r", "rounds", "How many times to cycle through all cores", 1);
     auto outfile_opt = op.add<Value<std::string> >("o", "output", "Output filename for results",
                                                    "results/output.csv");
@@ -333,7 +333,7 @@ int main(int argc, char **argv) {
     size_t actual_transition_count = 0;
 
     // NEW: Instantiate the storage for our eye diagram
-    size_t expected_events = 122; // use cycles_opt value in original code; kept simple here
+    size_t expected_events = cycles_opt->value(); // use cycles_opt value in original code; kept simple here
     EyeDiagramStorage eye_storage(n_measurements, expected_events);
     EyeCapturer capturer(eye_storage, n_measurements);
 
