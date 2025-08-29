@@ -6,14 +6,14 @@ add_compile_options(-Wall -Wextra -pedantic)
 if (CMAKE_BUILD_TYPE STREQUAL "Release")
     message(STATUS "Release build")
     add_compile_options(
-            -O3
+            -O1
             -march=native
             -mtune=native
             -ffast-math
-            -floop-parallelize-all
-            -floop-nest-optimize
-            -floop-interchange
-            -faggressive-loop-optimizations
+#            -floop-parallelize-all
+#            -floop-nest-optimize
+#            -floop-interchange
+#            -faggressive-loop-optimizations
 #-falign-functions
 #-falign-jumps
 #-falign-labels
@@ -251,7 +251,7 @@ if (CMAKE_BUILD_TYPE STREQUAL "Release")
 #-gstatement-frontiers
     )
     add_compile_definitions(NDEBUG)
-    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
+#    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
 elseif (CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
     message(STATUS "RelWithDebInfo build")
     add_compile_options(

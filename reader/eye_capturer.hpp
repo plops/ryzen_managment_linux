@@ -42,7 +42,6 @@ public:
 private:
     EyeDiagramStorage &storage_;
     size_t n_sensors_; // Number of floating point entries in pm_table
-    std::vector<bool> valid_sensor_; // Flags columns of the  that are changing (not constant)
     int last_worker_state_{0};
     TimePoint last_rise_time_;
     enum class State { IDLE, CAPTURING } state_{State::IDLE};

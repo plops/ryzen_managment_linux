@@ -23,7 +23,7 @@
 #include "pm_table_reader.hpp"
 #include "eye_diagram.hpp"
 #include "eye_capturer.hpp"
-
+#include "folly/stats/StreamingStats.h"
 
 // --- Global Atomic Flags for Thread Synchronization ---
 // These are used to signal start/stop without using mutexes
@@ -95,7 +95,7 @@ void measurement_thread_func(int core_id,
 
         // Store in pre-allocated buffer
         if (sample_count < storage.size()) {
-            auto& target = storage[sample_count];
+            auto &target = storage[sample_count];
             auto floatPtr = target.measurements.data();
             auto charPtr = reinterpret_cast<char *>(floatPtr);
             // Read sensors
@@ -126,7 +126,6 @@ void measurement_thread_func(int core_id,
  * @param period_ms Length of one duty cycle in milliseconds.
  * @param duty_cycle_percent Percentage of the period spent busy (1..99).
  * @param num_cycles Number of busy/wait cycles to execute.
- * @param storage Pre-allocated vector to record WorkerTransition events.
  * @param transition_count Out parameter updated with the number of transitions recorded.
  */
 void worker_thread_func(int core_id,
@@ -173,7 +172,7 @@ void worker_thread_func(int core_id,
  * @param trim_percentage Percentage of samples to remove from each tail (0..50).
  * @return Trimmed mean or median if trimming removed too many elements.
  */
-static float calculate_trimmed_mean(const std::vector<float>& data, float trim_percentage) {
+static float calculate_trimmed_mean(const std::vector<float> &data, float trim_percentage) {
     if (data.empty()) return 0.0f;
     std::vector<float> sorted = data;
     std::sort(sorted.begin(), sorted.end());
@@ -244,14 +243,15 @@ void analyze_and_print_results(int core_id,
                 std::sort(sorted_bin.begin(), sorted_bin.end());
                 float median;
                 size_t n = sorted_bin.size();
-                if (n % 2 == 0) median = 0.5f * (sorted_bin[n/2 - 1] + sorted_bin[n/2]);
-                else median = sorted_bin[n/2];
+                if (n % 2 == 0) median = 0.5f * (sorted_bin[n / 2 - 1] + sorted_bin[n / 2]);
+                else median = sorted_bin[n / 2];
                 std::cout << relative_time_ms << "\t\t" << std::fixed << std::setprecision(4) << median
-                          << "\t" << bin.size() << std::endl;
+                        << "\t" << bin.size() << std::endl;
             }
         }
 
-        std::cout << "\n--- Sensor v" << sensor << " Eye Diagram (TrimmedMean " << trim_percent << "%) ---" << std::endl;
+        std::cout << "\n--- Sensor v" << sensor << " Eye Diagram (TrimmedMean " << trim_percent << "%) ---" <<
+                std::endl;
         std::cout << "Time(ms)\tTrimmedMean\tSamples" << std::endl;
         for (int i = 0; i < EyeDiagramStorage::NUM_BINS; ++i) {
             const auto &bin = eye_storage.bins[i][sensor];
@@ -259,14 +259,12 @@ void analyze_and_print_results(int core_id,
                 int relative_time_ms = i - EyeDiagramStorage::ZERO_OFFSET_BINS;
                 float robust_mean = calculate_trimmed_mean(bin, trim_percent);
                 std::cout << relative_time_ms << "\t\t" << std::fixed << std::setprecision(4) << robust_mean
-                          << "\t" << bin.size() << std::endl;
+                        << "\t" << bin.size() << std::endl;
             }
         }
     }
     std::cout << "-----------------------\n" << std::endl;
 }
-
-
 
 
 // --- Main Program Logic ---
@@ -317,6 +315,33 @@ int main(int argc, char **argv) {
     PmTableReader pm_table_reader;
     const size_t n_measurements = pm_table_reader.getPmTableSize() / sizeof(float);
 
+    {
+        // Read a few times to determine the pm_table entries that are changing
+        std::vector<float> measurements(n_measurements);
+        std::vector<folly::StreamingStats<float, float> > stats(n_measurements);
+        std::vector<bool> interesting(n_measurements, false);
+        const auto sample_period = std::chrono::milliseconds(1);
+        auto next_sample_time = Clock::now();
+        for (int count = 0; count < 997; count++) {
+            // Read sensors
+            pm_table_reader.read(reinterpret_cast<char *>(measurements.data()));
+            for (int i = 0; i < n_measurements; ++i) {
+                stats[i].add(measurements[i]);
+            }
+            next_sample_time += sample_period;
+            std::this_thread::sleep_until(next_sample_time);
+        }
+        int count_interesting = 0;
+        for (int i = 0; i < n_measurements; ++i) {
+            if (stats[i].sampleVariance() > 0.f) {
+                interesting[i] = true;
+                count_interesting++;
+            }
+        }
+        std::cout << "count_interesting = " << count_interesting << std::endl;
+    }
+
+
     // --- Pre-allocation of Memory ---
     const size_t max_samples_per_run = (period_opt->value() / 1) * cycles_opt->value() + 1000;
     // 1ms sample rate + buffer
@@ -340,7 +365,7 @@ int main(int argc, char **argv) {
     // File for final output
     std::ofstream outfile(outfile_opt->value());
     outfile << "round,core_id,timestamp_ns,worker_state"; //"sensor1,sensor2\n";
-    for (int i=0; i< n_measurements; i++) {
+    for (int i = 0; i < n_measurements; i++) {
         outfile << ",v" << std::to_string(i);
     }
     outfile << std::endl;

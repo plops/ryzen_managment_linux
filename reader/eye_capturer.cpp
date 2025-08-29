@@ -6,7 +6,7 @@
  * Stores a reference to EyeDiagramStorage and remembers the number of sensors.
  */
 EyeCapturer::EyeCapturer(EyeDiagramStorage &storage, size_t n_sensors)
-    : storage_(storage), n_sensors_(n_sensors), valid_sensor_(n_sensors) { }
+    : storage_(storage), n_sensors_(n_sensors) { }
 
 /**
  * @brief Process a sample and bin sensor values relative to the most recent rising edge.
