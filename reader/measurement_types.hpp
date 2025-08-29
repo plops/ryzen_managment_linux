@@ -23,9 +23,6 @@ struct MeasurementSample {
     TimePoint timestamp{};
     int worker_state{0}; // 0 for waiting, 1 for busy
     std::vector<float> measurements;
-    std::vector<uint64_t> eye_off0;
-    std::vector<uint64_t> eye_on;
-    std::vector<uint64_t> eye_off1;
 };
 
 /**

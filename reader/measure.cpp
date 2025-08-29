@@ -109,6 +109,9 @@ void measurement_thread_func(int core_id,
         assert(sample_count < storage.size());
 
         next_sample_time += sample_period;
+        if (Clock::now() > next_sample_time) {
+            std::cerr << "Can't maintain sample rate" << std::endl;
+        }
         std::this_thread::sleep_until(next_sample_time);
     }
 }
@@ -130,7 +133,6 @@ void worker_thread_func(int core_id,
                         int period_ms,
                         int duty_cycle_percent,
                         int num_cycles,
-                        std::vector<WorkerTransition> &storage,
                         size_t &transition_count) {
     if (!set_thread_affinity(core_id)) {
         std::cerr << "Warning: Failed to set worker thread affinity to core " << core_id << std::endl;
@@ -147,10 +149,6 @@ void worker_thread_func(int core_id,
     for (int i = 0; i < num_cycles; ++i) {
         // --- BUSY PHASE ---
         g_worker_state.store(1, std::memory_order_relaxed);
-        if (transition_count < storage.size()) {
-            storage[transition_count++] = {Clock::now(), 1};
-        }
-        assert(transition_count < storage.size());
 
         auto busy_start = Clock::now();
         while ((Clock::now() - busy_start) < busy_duration) {
@@ -159,9 +157,6 @@ void worker_thread_func(int core_id,
 
         // --- WAITING PHASE ---
         g_worker_state.store(0, std::memory_order_relaxed);
-        if (transition_count < storage.size()) {
-            storage[transition_count++] = {Clock::now(), 0};
-        }
 
         std::this_thread::sleep_for(wait_duration);
     }
@@ -210,7 +205,7 @@ static float calculate_trimmed_mean(const std::vector<float>& data, float trim_p
  */
 void analyze_and_print_results(int core_id,
                                const std::vector<MeasurementSample> &measurements, size_t sample_count,
-                               const std::vector<WorkerTransition> &transitions, size_t transition_count,
+                               size_t transition_count,
                                const EyeDiagramStorage &eye_storage) {
     std::cout << "--- Analyzing Core " << core_id << " ---" << std::endl;
     std::cout << "Collected " << sample_count << " measurement samples." << std::endl;
@@ -334,7 +329,6 @@ int main(int argc, char **argv) {
     }
     assert(measurement_storage.size() == max_samples_per_run);
     assert(measurement_storage[0].measurements.size() == n_measurements);
-    std::vector<WorkerTransition> transition_storage(max_transitions_per_run);
     size_t actual_sample_count = 0;
     size_t actual_transition_count = 0;
 
@@ -377,7 +371,7 @@ int main(int argc, char **argv) {
 
             std::thread worker_thread(worker_thread_func, core_to_test,
                                       period_opt->value(), duty_cycle_opt->value(), cycles_opt->value(),
-                                      std::ref(transition_storage), std::ref(actual_transition_count));
+                                      std::ref(actual_transition_count));
 
             // Give threads a moment to initialize and set affinity
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -397,7 +391,7 @@ int main(int argc, char **argv) {
 
             // --- Analyze and Store Results (between core runs) ---
             analyze_and_print_results(core_to_test, measurement_storage, actual_sample_count,
-                                      transition_storage, actual_transition_count,
+                                      actual_transition_count,
                                       eye_storage); // NEW: Pass storage to analysis function
 
             // Write the raw data for this run to the file
