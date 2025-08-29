@@ -1,4 +1,9 @@
-// measure.cpp
+/** @file measure.cpp
+ *  @brief Measurement harness: spawns worker and measurement threads, records samples and analyzes eye diagrams.
+ *
+ *  This file coordinates the experiment loop, pre-allocates buffers and writes results.
+ */
+
 #include <iostream>
 #include <vector>
 #include <thread>
@@ -22,8 +27,25 @@
 
 // --- Global Atomic Flags for Thread Synchronization ---
 // These are used to signal start/stop without using mutexes
+/**
+ * @brief Global flag to control measurement thread execution.
+ *
+ * When true the measurement thread samples sensors at 1ms intervals.
+ */
 std::atomic<bool> g_run_measurement = false;
+
+/**
+ * @brief Global flag to control worker thread execution.
+ *
+ * When true the worker thread begins its busy/wait cycles.
+ */
 std::atomic<bool> g_run_worker = false;
+
+/**
+ * @brief Global worker state communicated to the measurement thread.
+ *
+ * Value is 0 when the worker is idle (waiting) and 1 when the worker is busy.
+ */
 std::atomic<int> g_worker_state = 0; // The single point of communication during a run
 
 /*
@@ -38,6 +60,18 @@ std::atomic<int> g_worker_state = 0; // The single point of communication during
 
 // --- Thread Functions ---
 
+/**
+ * @brief Measurement thread function.
+ *
+ * Samples the pm_table at a fixed 1ms rate, stores a MeasurementSample in the provided buffer,
+ * and forwards samples to the EyeCapturer for binning.
+ *
+ * @param core_id CPU core to pin the measurement thread to.
+ * @param storage Pre-allocated vector of MeasurementSample to fill.
+ * @param sample_count Out parameter updated with the number of samples written.
+ * @param pm_table_reader Reader object for the pm_table sysfs blob.
+ * @param capturer EyeCapturer that bins samples into the EyeDiagramStorage.
+ */
 void measurement_thread_func(int core_id,
                              std::vector<MeasurementSample> &storage,
                              size_t &sample_count,
@@ -79,6 +113,19 @@ void measurement_thread_func(int core_id,
     }
 }
 
+/**
+ * @brief Worker thread function implementing the busy/wait workload.
+ *
+ * The worker toggles g_worker_state between busy (1) and wait (0) according to the provided
+ * period and duty-cycle. Each transition is optionally stored in the provided storage vector.
+ *
+ * @param core_id CPU core to pin the worker thread to.
+ * @param period_ms Length of one duty cycle in milliseconds.
+ * @param duty_cycle_percent Percentage of the period spent busy (1..99).
+ * @param num_cycles Number of busy/wait cycles to execute.
+ * @param storage Pre-allocated vector to record WorkerTransition events.
+ * @param transition_count Out parameter updated with the number of transitions recorded.
+ */
 void worker_thread_func(int core_id,
                         int period_ms,
                         int duty_cycle_percent,
@@ -120,7 +167,17 @@ void worker_thread_func(int core_id,
     }
 }
 
-// Add trimmed mean helper used by analyze_and_print_results
+/**
+ * @brief Calculate a trimmed mean (robust average).
+ *
+ * Sorts a copy of the input data and removes trim_percentage% of samples
+ * from each side before averaging the remainder. Falls back to median if
+ * too few samples remain after trimming.
+ *
+ * @param data Input sample vector.
+ * @param trim_percentage Percentage of samples to remove from each tail (0..50).
+ * @return Trimmed mean or median if trimming removed too many elements.
+ */
 static float calculate_trimmed_mean(const std::vector<float>& data, float trim_percentage) {
     if (data.empty()) return 0.0f;
     std::vector<float> sorted = data;
@@ -138,7 +195,19 @@ static float calculate_trimmed_mean(const std::vector<float>& data, float trim_p
     return static_cast<float>(sum / (count ? count : 1));
 }
 
-// --- Analysis Function ---
+/**
+ * @brief Analyze collected measurements and print results.
+ *
+ * Computes simple busy/wait means (for sensor 17) and prints eye-diagram statistics
+ * (median and trimmed mean) for every sensor stored in EyeDiagramStorage.
+ *
+ * @param core_id Core under test (for labeling).
+ * @param measurements Vector of MeasurementSample containing raw capture data.
+ * @param sample_count Number of samples actually recorded.
+ * @param transitions Vector of WorkerTransition events recorded by the worker thread.
+ * @param transition_count Number of transitions recorded.
+ * @param eye_storage Pre-populated EyeDiagramStorage used to compute eye-diagram stats.
+ */
 void analyze_and_print_results(int core_id,
                                const std::vector<MeasurementSample> &measurements, size_t sample_count,
                                const std::vector<WorkerTransition> &transitions, size_t transition_count,
@@ -207,6 +276,16 @@ void analyze_and_print_results(int core_id,
 
 // --- Main Program Logic ---
 
+/**
+ * @brief Program entrypoint: parses CLI, allocates buffers and runs experiments.
+ *
+ * The main function pre-allocates measurement buffers, constructs the pm_table reader,
+ * eye storage and capturer, and iterates through rounds/cores executing the workload.
+ *
+ * @param argc Argument count.
+ * @param argv Argument vector.
+ * @return Exit status (0 on success).
+ */
 int main(int argc, char **argv) {
     using namespace popl;
 

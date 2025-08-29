@@ -1,8 +1,20 @@
 #include "eye_capturer.hpp"
 
+/**
+ * @brief Construct an EyeCapturer.
+ *
+ * Stores a reference to EyeDiagramStorage and remembers the number of sensors.
+ */
 EyeCapturer::EyeCapturer(EyeDiagramStorage &storage, size_t n_sensors)
     : storage_(storage), n_sensors_(n_sensors) { }
 
+/**
+ * @brief Process a sample and bin sensor values relative to the most recent rising edge.
+ *
+ * - Detects a rising edge (0->1) and starts capture.
+ * - Computes the millisecond bin index relative to the rising-edge timestamp.
+ * - Bins every sensor value that exists in measurements into the corresponding vector.
+ */
 void EyeCapturer::process_sample(const TimePoint &timestamp, int worker_state, const std::vector<float> &measurements) {
     // Detect rising edge 0 -> 1
     if (worker_state == 1 && last_worker_state_ == 0) {
