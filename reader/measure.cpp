@@ -15,6 +15,7 @@
 #include <iomanip>
 #include <memory>
 #include <cassert>
+#include <sys/mman.h>
 
 #include "popl.hpp"
 #include <spdlog/spdlog.h>
@@ -25,6 +26,8 @@
 #include "eye_diagram.hpp"
 #include "eye_capturer.hpp"
 #include "folly/stats/StreamingStats.h"
+
+#include "realtime_guard.hpp" // NEW: RAII helper for realtime + mlockall
 
 // --- Global Atomic Flags for Thread Synchronization ---
 // These are used to signal start/stop without using mutexes
@@ -78,9 +81,12 @@ void measurement_thread_func(int core_id,
                              size_t &sample_count,
                              PmTableReader &pm_table_reader,
                              EyeCapturer &capturer) {
-    if (!set_thread_affinity(core_id)) {
-        std::cerr << "Warning: Failed to set measurement thread affinity to core " << core_id << std::endl;
-    }
+    // if (!set_thread_affinity(core_id)) {
+    //     std::cerr << "Warning: Failed to set measurement thread affinity to core " << core_id << std::endl;
+    // }
+
+    // Promote this measurement thread to realtime for the duration of the sampling loop
+    RealtimeGuard thread_rt(core_id, /*priority=*/80, /*lock_memory=*/false);
 
     // Wait for the signal to start
     while (!g_run_measurement.load(std::memory_order_acquire));
@@ -115,6 +121,8 @@ void measurement_thread_func(int core_id,
         }
         std::this_thread::sleep_until(next_sample_time);
     }
+
+    // thread_rt destructor will restore scheduling/affinity
 }
 
 /**
@@ -317,6 +325,9 @@ int main(int argc, char **argv) {
 
     std::vector<int> interesting_index;
     {
+        // Promote main thread to realtime and lock memory for the duration of this short pre-sampling check
+        RealtimeGuard precheck_rt(measurement_core, /*priority=*/80, /*lock_memory=*/true);
+
         // Read a few times to determine the pm_table entries that are changing, stores result in interesting_index
         std::vector<float> measurements(n_measurements);
         std::vector<folly::StreamingStats<float, float> > stats(n_measurements);
@@ -337,6 +348,8 @@ int main(int argc, char **argv) {
             }
             std::this_thread::sleep_until(next_sample_time);
         }
+        // precheck_rt destructor runs here -> restores scheduling/affinity and munlockall
+
         int count_interesting = 0;
         for (int i = 0; i < n_measurements; ++i) {
             if (stats[i].sampleVariance() > 0.f) {
@@ -354,15 +367,25 @@ int main(int argc, char **argv) {
         }
         SPDLOG_INFO("The pm_table on this platform contains {} entries. {} of these were changing when reading {} samples with a period of {} ms.",
             n_measurements,count_interesting,n_samples,sample_period.count());
-        auto first = (std::find(interesting.begin(),interesting.end(),true)-interesting.begin());
-        int last;
-        for (last = n_measurements-1; last>=first; last--) {
-            if (interesting[last])
-                break;
+
+        auto first_it = std::find(interesting.begin(), interesting.end(), true);
+
+        if (first_it == interesting.end()) {
+            SPDLOG_INFO("No changing values found in the pm_table.");
+        } else {
+            auto first = std::distance(interesting.begin(), first_it);
+            ssize_t last = -1;
+            for (ssize_t i = n_measurements - 1; i >= 0; --i) {
+                if (interesting[i]) {
+                    last = i;
+                    break;
+                }
+            }
+            auto num = (last >= first) ? (last - first + 1) : 0;
+            SPDLOG_INFO("The consecutive range of changing values includes the entries from index {} until {}, {} values overall.",
+                first, last, num);
         }
-        auto num = last - first;
-        SPDLOG_INFO("The consecutive range of changing values includes the entries from index {} until {}, {} values overall.",
-            first, last, num);
+
         if (missed_samples)
             SPDLOG_WARN("Of the {} samples {} were late ({:.0g}%). Your CPU cannnot sample itself with the expected rate.",
                 n_samples, missed_samples, missed_samples*100.f/n_samples);
@@ -467,5 +490,6 @@ int main(int argc, char **argv) {
     outfile.close();
     std::cout << "Results saved to " << outfile_opt->value() << std::endl;
 
+    spdlog::shutdown(); // Flush all logs before exiting
     return 0;
 }

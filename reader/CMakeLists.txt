@@ -22,10 +22,11 @@ target_link_libraries(pm_reader PRIVATE Threads::Threads)
 
 # Build pm_measure with split sources
 add_executable(pm_measure
-    measure.cpp
-    pm_table_reader.cpp
-    eye_diagram.cpp
-    eye_capturer.cpp
+        measure.cpp
+        pm_table_reader.cpp
+        eye_diagram.cpp
+        eye_capturer.cpp
+        realtime_guard.cpp
 )
 
 target_link_libraries(pm_measure
