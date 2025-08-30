@@ -33,5 +33,5 @@ void EyeDiagramStorage::clear() {
 void EyeDiagramStorage::add_sample(int bin_index, size_t sensor_index, float value) {
     if (bin_index < 0 || bin_index >= NUM_BINS) return;
     if (sensor_index >= bins[bin_index].size()) return;
-    bins[bin_index][sensor_index].push_back(value);
+    bins[bin_index][sensor_index].push_back(value); // The push_back shouldn't allocate. Vector is reserved
 }
