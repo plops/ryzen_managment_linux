@@ -69,59 +69,7 @@ std::atomic<int> g_worker_state = 0; // The single point of communication during
 
 // --- New: safe page-aligned locked buffer helpers ---
 
-// Try to allocate an anonymous, page-aligned region and lock it. Returns nullptr on failure.
-// If locking fails due to permissions/rlimit, we return the mmap'd memory without locking
-// so the program can continue with a warning.
-static void *alloc_locked_buffer(size_t bytes, bool &locked_out) {
-    locked_out = false;
-    if (bytes == 0) return nullptr;
 
-    // Round bytes up to page size
-    long page_sz = sysconf(_SC_PAGESIZE);
-    size_t pages = (bytes + page_sz - 1) / page_sz;
-    size_t rounded = pages * page_sz;
-
-    void *ptr = mmap(NULL, rounded, PROT_READ | PROT_WRITE,
-                     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (ptr == MAP_FAILED) {
-        perror("mmap");
-        return nullptr;
-    }
-
-    // Check RLIMIT_MEMLOCK before attempting to lock
-    struct rlimit rl;
-    if (getrlimit(RLIMIT_MEMLOCK, &rl) == 0) {
-        if ((rl.rlim_cur != RLIM_INFINITY) && (rounded > (size_t)rl.rlim_cur)) {
-            // Too big to lock given current rlimit — warn and skip lock
-            SPDLOG_WARN("Requested to mlock {} bytes but RLIMIT_MEMLOCK is {}. Proceeding without lock.",
-                        rounded, (unsigned long)rl.rlim_cur);
-            return ptr;
-        }
-    }
-
-    if (mlock(ptr, rounded) == 0) {
-        locked_out = true;
-    } else {
-        // Non-fatal: warn and continue with unlocked mapping
-        SPDLOG_WARN("mlock failed (errno={}). Proceeding without locked memory.", errno);
-    }
-    return ptr;
-}
-
-static void free_locked_buffer(void *ptr, size_t bytes, bool locked) {
-    if (!ptr) return;
-    long page_sz = sysconf(_SC_PAGESIZE);
-    size_t pages = (bytes + page_sz - 1) / page_sz;
-    size_t rounded = pages * page_sz;
-    if (locked) {
-        if (munlock(ptr, rounded) != 0) {
-            SPDLOG_WARN("munlock failed (errno={})", errno);
-        }
-    }
-    if (munmap(ptr, rounded) != 0) {
-        SPDLOG_WARN("munmap failed (errno={})", errno);
-    }
-}
 
 // --- New: lightweight per-sample view pointing to slices in the locked buffer ---
 struct LocalMeasurement {

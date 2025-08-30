@@ -1,3 +1,8 @@
+/**
+ * @file locked_buffer.cpp
+ * @brief Implementation of LockedBuffer: allocation, optional mlock and cleanup.
+ */
+
 #include "locked_buffer.hpp"
 
 #include <sys/mman.h>
@@ -7,6 +12,14 @@
 #include <cerrno>
 #include <spdlog/spdlog.h>
 
+/**
+ * @brief Construct and attempt to allocate and lock a buffer.
+ *
+ * Attempts mmap of a page-rounded size and then mlock if RLIMIT_MEMLOCK allows.
+ * Falls back to malloc (unlocked) if mmap fails.
+ *
+ * @param bytes requested number of bytes (0 means no allocation)
+ */
 LockedBuffer::LockedBuffer(std::size_t bytes) noexcept
     : ptr_(nullptr), bytes_(0), locked_(false), mmaped_(false) {
     if (bytes == 0) return;
@@ -57,10 +70,19 @@ LockedBuffer::LockedBuffer(std::size_t bytes) noexcept
     }
 }
 
+/**
+ * @brief Destructor - perform cleanup.
+ *
+ * Ensures any locked/mapped or allocated memory is released.
+ */
 LockedBuffer::~LockedBuffer() noexcept {
     cleanup();
 }
 
+/**
+ * @brief Move constructor - transfer ownership from other.
+ * @param o source object (left in empty state)
+ */
 LockedBuffer::LockedBuffer(LockedBuffer&& o) noexcept
     : ptr_(o.ptr_), bytes_(o.bytes_), locked_(o.locked_), mmaped_(o.mmaped_) {
     o.ptr_ = nullptr;
@@ -69,6 +91,11 @@ LockedBuffer::LockedBuffer(LockedBuffer&& o) noexcept
     o.mmaped_ = false;
 }
 
+/**
+ * @brief Move-assignment - release current resources and take those from other.
+ * @param o source object
+ * @return reference to *this
+ */
 LockedBuffer& LockedBuffer::operator=(LockedBuffer&& o) noexcept {
     if (this != &o) {
         cleanup();
@@ -84,11 +111,35 @@ LockedBuffer& LockedBuffer::operator=(LockedBuffer&& o) noexcept {
     return *this;
 }
 
+/**
+ * @brief Get underlying data pointer.
+ * @return pointer to the allocated buffer or nullptr if none.
+ */
 void* LockedBuffer::data() const noexcept { return ptr_; }
+
+/**
+ * @brief Get allocated size in bytes.
+ * @return size of the buffer, 0 if none. When mmaped, this is page-rounded.
+ */
 std::size_t LockedBuffer::size() const noexcept { return bytes_; }
+
+/**
+ * @brief Query whether memory was successfully locked.
+ * @return true if mlock succeeded and memory is locked in RAM.
+ */
 bool LockedBuffer::locked() const noexcept { return locked_; }
+
+/**
+ * @brief Boolean test for whether allocation succeeded.
+ * @return true when data() != nullptr.
+ */
 LockedBuffer::operator bool() const noexcept { return ptr_ != nullptr; }
 
+/**
+ * @brief Internal cleanup: unmap/munlock or free and reset state.
+ *
+ * This is noexcept and logs warnings on munlock/munmap failures.
+ */
 void LockedBuffer::cleanup() noexcept {
     if (!ptr_) return;
     if (mmaped_) {
@@ -108,4 +159,3 @@ void LockedBuffer::cleanup() noexcept {
     locked_ = false;
     mmaped_ = false;
 }
-
