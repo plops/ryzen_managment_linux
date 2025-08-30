@@ -70,7 +70,6 @@ std::atomic<int> g_worker_state = 0; // The single point of communication during
 // --- New: safe page-aligned locked buffer helpers ---
 
 
-
 // --- New: lightweight per-sample view pointing to slices in the locked buffer ---
 struct LocalMeasurement {
     TimePoint timestamp;
@@ -115,27 +114,43 @@ void measurement_thread_func(int core_id,
         // Record timestamp and state immediately
         TimePoint timestamp = Clock::now();
         int worker_state = g_worker_state.load(std::memory_order_relaxed);
-
         // Store in pre-allocated buffer
+        decltype(timestamp) start;
+
         if (sample_count < storage.size()) {
             auto &target = storage[sample_count];
             auto charPtr = reinterpret_cast<char *>(target.measurements);
             // Read sensors directly into the locked buffer slice
             pm_table_reader.read(charPtr);
+            start = Clock::now();
             target.timestamp = timestamp;
             target.worker_state = worker_state;
             // process into eye capturer (bins per sensor)
             // forward as std::span<const float> to avoid copy
+
             capturer.process_sample(timestamp, worker_state,
                                     std::span<const float>(target.measurements,
                                                            pm_table_reader.getPmTableSize() / sizeof(float)));
             sample_count++;
         }
+        auto end = Clock::now();
+
         assert(sample_count < storage.size());
 
         next_sample_time += sample_period;
-        if (Clock::now() > next_sample_time) {
-            std::cerr << "Can't maintain sample rate" << std::endl;
+        auto end2 = Clock::now();
+        auto read_time_ms = std::chrono::duration_cast<std::chrono::nanoseconds>(end2 - start).count()/1e6f;
+        auto proc_time_ms = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count()/1e6f;
+        if (end2 > next_sample_time) {
+            SPDLOG_ERROR("Cannot maintain sample rate: late by {:.1}ms, read took {:.1}ms, processing took {:.1}ms",
+                         (end2-next_sample_time).count()/1e6f,
+                         read_time_ms,
+                         proc_time_ms);
+        } else {
+            // SPDLOG_ERROR("Can maintain sample rate: early by {:.1}ms, read took {:.1}ms, processing took {:.1}ms",
+            //              (next_sample_time-end2).count()/1e6f,
+            //              read_time_ms,
+            //              proc_time_ms);
         }
         std::this_thread::sleep_until(next_sample_time);
     }
@@ -258,6 +273,7 @@ void analyze_and_print_results(int core_id,
     const float trim_percent = 10.0f;
     size_t n_sensors = eye_storage.bins.empty() ? 0 : eye_storage.bins[0].size();
 
+    if (0)
     for (size_t sensor = 0; sensor < n_sensors; ++sensor) {
         std::cout << "\n--- Sensor v" << sensor << " Eye Diagram (Median) ---" << std::endl;
         std::cout << "Captured " << eye_storage.event_count << " rising edge events." << std::endl;
@@ -379,7 +395,7 @@ int main(int argc, char **argv) {
                 count_interesting++;
             }
         }
-        interesting_index.resize(count_interesting,-1);
+        interesting_index.resize(count_interesting, -1);
         count_interesting = 0;
         for (int i = 0; i < n_measurements; ++i) {
             if (stats[i].sampleVariance() > 0.f) {
@@ -387,8 +403,9 @@ int main(int argc, char **argv) {
                 count_interesting++;
             }
         }
-        SPDLOG_INFO("The pm_table on this platform contains {} entries. {} of these were changing when reading {} samples with a period of {} ms.",
-            n_measurements,count_interesting,n_samples,sample_period.count());
+        SPDLOG_INFO(
+            "The pm_table on this platform contains {} entries. {} of these were changing when reading {} samples with a period of {} ms.",
+            n_measurements, count_interesting, n_samples, sample_period.count());
 
         auto first_it = std::find(interesting.begin(), interesting.end(), true);
 
@@ -404,13 +421,14 @@ int main(int argc, char **argv) {
                 }
             }
             auto num = (last >= first) ? (last - first + 1) : 0;
-            SPDLOG_INFO("The consecutive range of changing values includes the entries from index {} until {}, {} values overall.",
+            SPDLOG_INFO(
+                "The consecutive range of changing values includes the entries from index {} until {}, {} values overall.",
                 first, last, num);
         }
 
         if (missed_samples)
             SPDLOG_WARN("Of the {} samples {} were late ({:.0g}%). Your CPU cannnot sample itself with the expected rate.",
-                n_samples, missed_samples, missed_samples*100.f/n_samples);
+                    n_samples, missed_samples, missed_samples*100.f/n_samples);
     }
 
     // --- Pre-allocation of Memory ---
@@ -436,7 +454,7 @@ int main(int argc, char **argv) {
         LocalMeasurement lm;
         lm.timestamp = Clock::now();
         lm.worker_state = 0;
-        lm.measurements = reinterpret_cast<float*>(locked_buf.data()) + (i * n_measurements);
+        lm.measurements = reinterpret_cast<float *>(locked_buf.data()) + (i * n_measurements);
         // Optionally zero first sample slice
         // memset(lm.measurements, 0, n_measurements * sizeof(float));
         measurement_view.push_back(lm);
@@ -514,7 +532,7 @@ int main(int argc, char **argv) {
                         << std::chrono::duration_cast<std::chrono::nanoseconds>(s.timestamp.time_since_epoch()).
                         count() << ","
                         << s.worker_state;
-                for (size_t v = 0; v < (size_t)n_measurements; ++v) {
+                for (size_t v = 0; v < (size_t) n_measurements; ++v) {
                     outfile << "," << s.measurements[v];
                 }
                 outfile << std::endl;
