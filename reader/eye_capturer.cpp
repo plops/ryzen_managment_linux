@@ -30,14 +30,16 @@ bool EyeCapturer::process_sample(const TimePoint &timestamp, int worker_state, s
     if (state_ == State::CAPTURING) {
         auto time_since_rise = std::chrono::duration_cast<std::chrono::milliseconds>(timestamp - last_rise_time_);
         long long time_delta_ms = time_since_rise.count();
-        long long bin_index = time_delta_ms + EyeDiagramStorage::ZERO_OFFSET_BINS;
 
-        if (bin_index >= 0 && bin_index < EyeDiagramStorage::NUM_BINS) {
+        // Use runtime-configurable zero offset and number of bins from storage_
+        long long bin_index = time_delta_ms + static_cast<long long>(storage_.zero_offset_bins);
+
+        if (bin_index >= 0 && bin_index < static_cast<long long>(storage_.num_bins)) {
             // Bin each sensor's value for this timestamp
             for (size_t si = 0; si < n_sensors_ && si < measurements.size(); ++si) {
                 storage_.add_sample(static_cast<int>(bin_index), si, measurements[si]);
             }
-        } else if (bin_index >= EyeDiagramStorage::NUM_BINS) {
+        } else if (bin_index >= static_cast<long long>(storage_.num_bins)) {
             // End of capture window
             state_ = State::IDLE;
         }

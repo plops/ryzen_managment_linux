@@ -262,10 +262,11 @@ void analyze_and_print_results(int core_id,
         std::cout << "\n--- Sensor v" << sensor << " Eye Diagram (Median) ---" << std::endl;
         std::cout << "Captured " << eye_storage.event_count << " rising edge events." << std::endl;
         std::cout << "Time(ms)\tMedian\tSamples" << std::endl;
-        for (int i = 0; i < EyeDiagramStorage::NUM_BINS; ++i) {
+        // iterate using runtime-configured number of bins
+        for (int i = 0; i < eye_storage.num_bins; ++i) {
             const auto &bin = eye_storage.bins[i][sensor];
             if (!bin.empty()) {
-                int relative_time_ms = i - EyeDiagramStorage::ZERO_OFFSET_BINS;
+                int relative_time_ms = i - eye_storage.zero_offset_bins;
                 std::vector<float> sorted_bin = bin;
                 std::sort(sorted_bin.begin(), sorted_bin.end());
                 float median;
@@ -280,10 +281,10 @@ void analyze_and_print_results(int core_id,
         std::cout << "\n--- Sensor v" << sensor << " Eye Diagram (TrimmedMean " << trim_percent << "%) ---" <<
                 std::endl;
         std::cout << "Time(ms)\tTrimmedMean\tSamples" << std::endl;
-        for (int i = 0; i < EyeDiagramStorage::NUM_BINS; ++i) {
+        for (int i = 0; i < eye_storage.num_bins; ++i) {
             const auto &bin = eye_storage.bins[i][sensor];
             if (!bin.empty()) {
-                int relative_time_ms = i - EyeDiagramStorage::ZERO_OFFSET_BINS;
+                int relative_time_ms = i - eye_storage.zero_offset_bins;
                 float robust_mean = calculate_trimmed_mean(bin, trim_percent);
                 std::cout << relative_time_ms << "\t\t" << std::fixed << std::setprecision(4) << robust_mean
                         << "\t" << bin.size() << std::endl;
