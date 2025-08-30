@@ -11,6 +11,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 include(cmake/flags.cmake)
 include(cmake/sanitizers.cmake)
+include(cmake/spdlog.cmake)
 
 # Add the executable target from our source file
 add_executable(pm_reader main.cpp)
@@ -27,7 +28,11 @@ add_executable(pm_measure
     eye_capturer.cpp
 )
 
-target_link_libraries(pm_measure PRIVATE Threads::Threads)
+target_link_libraries(pm_measure
+        PRIVATE
+        Threads::Threads
+        spdlog::spdlog
+)
 file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/results)
 
 
