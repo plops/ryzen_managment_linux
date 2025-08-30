@@ -6,7 +6,7 @@ add_compile_options(-Wall -Wextra -pedantic)
 if (CMAKE_BUILD_TYPE STREQUAL "Release")
     message(STATUS "Release build")
     add_compile_options(
-            -O1
+            -O3
             -march=native
             -mtune=native
             -ffast-math
@@ -251,7 +251,7 @@ if (CMAKE_BUILD_TYPE STREQUAL "Release")
 #-gstatement-frontiers
     )
     add_compile_definitions(NDEBUG)
-#    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
 elseif (CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
     message(STATUS "RelWithDebInfo build")
     add_compile_options(

@@ -1,7 +1,7 @@
 #include "pm_table_reader.hpp"
 #include <iostream>
 #include <stdexcept>
-
+#include <spdlog/spdlog.h>
 /**
  * @brief Construct the reader by querying sysfs and opening the pm_table file.
  *
@@ -11,11 +11,11 @@ PmTableReader::PmTableReader()
     : pm_table_size{read_sysfs_uint64("/sys/kernel/ryzen_smu_drv/pm_table_size")},
       pm_table_stream("/sys/kernel/ryzen_smu_drv/pm_table", std::ios::binary) {
     if (pm_table_size == 0 || pm_table_size > 16384) {
-        std::cerr << "Error: Invalid pm_table size reported: " << pm_table_size << " bytes." << std::endl;
+        SPDLOG_ERROR("Invalid pm_table size reported: {} bytes.", pm_table_size);
     }
-    std::cout << "Detected pm_table size: " << pm_table_size << " bytes." << std::endl;
+    SPDLOG_TRACE("Detected pm_table size: {} bytes.", pm_table_size);
     if (!pm_table_stream) {
-        std::cerr << "Error: Failed to open /sys/kernel/ryzen_smu_drv/pm_table." << std::endl;
+        SPDLOG_ERROR("Failed to open /sys/kernel/ryzen_smu_drv/pm_table.");
     }
     pm_table_stream.seekg(0);
 }

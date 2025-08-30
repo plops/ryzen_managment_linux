@@ -28,7 +28,15 @@ public:
      * @param buffer Destination buffer.
      */
     void read(char *buffer); // reads pm_table_size bytes into buffer
-
+    /**
+     * @brief Read the pm_table blob into a caller-supplied buffer.
+     *
+     * This method reads pm_table_size bytes and rewinds the stream to the start.
+     */
+    inline void readi(char *buffer) {
+        pm_table_stream.read(buffer, getPmTableSize());
+        pm_table_stream.seekg(0);
+    }
 private:
     uint64_t read_sysfs_uint64(const std::string &path);
     uint64_t pm_table_size;

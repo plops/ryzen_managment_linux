@@ -327,7 +327,7 @@ int main(int argc, char **argv) {
         int n_samples = 997;
         for (int count = 0; count < n_samples; count++) {
             // Read sensors
-            pm_table_reader.read(reinterpret_cast<char *>(measurements.data()));
+            pm_table_reader.readi(reinterpret_cast<char *>(measurements.data()));
             for (int i = 0; i < n_measurements; ++i) {
                 stats[i].add(measurements[i]);
             }
@@ -365,7 +365,7 @@ int main(int argc, char **argv) {
             first, last, num);
         if (missed_samples)
             SPDLOG_WARN("Of the {} samples {} were late ({:.0g}%). Your CPU cannnot sample itself with the expected rate.",
-                n_samples, missed_samples, missed_samples*1.f/n_samples);
+                n_samples, missed_samples, missed_samples*100.f/n_samples);
     }
 
     // --- Pre-allocation of Memory ---
