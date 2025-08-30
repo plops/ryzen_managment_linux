@@ -17,8 +17,9 @@
 #include <cassert>
 
 #include "popl.hpp"
-#include "workloads.hpp"
+#include <spdlog/spdlog.h>
 
+#include "workloads.hpp"
 #include "measurement_types.hpp"
 #include "pm_table_reader.hpp"
 #include "eye_diagram.hpp"
@@ -283,9 +284,8 @@ int main(int argc, char **argv) {
     using namespace popl;
 
     if (geteuid() != 0) {
-        std::cerr << "Warning: This program works better with root privileges to read from sysfs with low latency." <<
-                std::endl;
-        std::cerr << "Please run with sudo." << std::endl;
+        SPDLOG_WARN("Warning: This program works better with root privileges to read from sysfs with low latency.");
+        SPDLOG_WARN("Please run with sudo.");
     }
 
     // --- Command Line Parsing ---
@@ -309,14 +309,16 @@ int main(int argc, char **argv) {
     // --- Experiment Setup ---
     const int num_hardware_threads = std::thread::hardware_concurrency();
     const int measurement_core = 0; // Pinned core for readout
+    SPDLOG_INFO("System has {} hardware threads.", num_hardware_threads);
     std::cout << "System has " << num_hardware_threads << " hardware threads." << std::endl;
     std::cout << "Measurement thread will be pinned to core " << measurement_core << "." << std::endl;
 
     PmTableReader pm_table_reader;
     const size_t n_measurements = pm_table_reader.getPmTableSize() / sizeof(float);
 
+    std::vector<int> interesting_index;
     {
-        // Read a few times to determine the pm_table entries that are changing
+        // Read a few times to determine the pm_table entries that are changing, stores result in interesting_index
         std::vector<float> measurements(n_measurements);
         std::vector<folly::StreamingStats<float, float> > stats(n_measurements);
         std::vector<bool> interesting(n_measurements, false);
@@ -338,9 +340,16 @@ int main(int argc, char **argv) {
                 count_interesting++;
             }
         }
+        interesting_index.resize(count_interesting);
+        count_interesting = 0;
+        for (int i = 0; i < n_measurements; ++i) {
+            if (stats[i].sampleVariance() > 0.f) {
+                interesting_index[count_interesting] = i;
+                count_interesting++;
+            }
+        }
         std::cout << "count_interesting = " << count_interesting << std::endl;
     }
-
 
     // --- Pre-allocation of Memory ---
     const size_t max_samples_per_run = (period_opt->value() / 1) * cycles_opt->value() + 1000;
@@ -358,7 +367,7 @@ int main(int argc, char **argv) {
     size_t actual_transition_count = 0;
 
     // NEW: Instantiate the storage for our eye diagram
-    size_t expected_events = cycles_opt->value(); // use cycles_opt value in original code; kept simple here
+    size_t expected_events = static_cast<int>(cycles_opt->value()*1.3f); // allow a bit more than cycles_opt
     EyeDiagramStorage eye_storage(n_measurements, expected_events);
     EyeCapturer capturer(eye_storage, n_measurements);
 
