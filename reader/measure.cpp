@@ -109,13 +109,22 @@ void measurement_thread_func(int core_id,
     const auto sample_period = std::chrono::milliseconds(1);
     auto next_sample_time = Clock::now();
     sample_count = 0;
+    TimePoint old_timestamp = next_sample_time;
 
     while (g_run_measurement.load(std::memory_order_acquire)) {
         // Record timestamp and state immediately
         TimePoint timestamp = Clock::now();
+
+        auto wait_time_ms = std::chrono::duration_cast<std::chrono::nanoseconds>(timestamp-old_timestamp).count()/1e6f;
+        old_timestamp = timestamp;
+
+        if (timestamp > next_sample_time) {
+            auto overtime_ms = std::chrono::duration_cast<std::chrono::nanoseconds>(timestamp-next_sample_time).count()/1e6f;
+            SPDLOG_WARN("wait_until took too long: overtime={:.1g}ms wait_time={:.6g}ms",overtime_ms,wait_time_ms);
+        }
         int worker_state = g_worker_state.load(std::memory_order_relaxed);
         // Store in pre-allocated buffer
-        decltype(timestamp) start;
+        TimePoint start;
 
         if (sample_count < storage.size()) {
             auto &target = storage[sample_count];
@@ -152,7 +161,11 @@ void measurement_thread_func(int core_id,
             //              read_time_ms,
             //              proc_time_ms);
         }
-        std::this_thread::sleep_until(next_sample_time);
+        // std::this_thread::sleep_until(next_sample_time-std::chrono::nanoseconds(30'000));
+        while (Clock::now() < next_sample_time) {
+            // Busy wait
+        }
+
     }
 
     // thread_rt destructor will restore scheduling/affinity
