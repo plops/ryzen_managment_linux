@@ -310,8 +310,7 @@ int main(int argc, char **argv) {
     const int num_hardware_threads = std::thread::hardware_concurrency();
     const int measurement_core = 0; // Pinned core for readout
     SPDLOG_INFO("System has {} hardware threads.", num_hardware_threads);
-    std::cout << "System has " << num_hardware_threads << " hardware threads." << std::endl;
-    std::cout << "Measurement thread will be pinned to core " << measurement_core << "." << std::endl;
+    SPDLOG_INFO("Measurement thread will be pinned to core {}.", measurement_core);
 
     PmTableReader pm_table_reader;
     const size_t n_measurements = pm_table_reader.getPmTableSize() / sizeof(float);
@@ -324,13 +323,18 @@ int main(int argc, char **argv) {
         std::vector<bool> interesting(n_measurements, false);
         const auto sample_period = std::chrono::milliseconds(1);
         auto next_sample_time = Clock::now();
-        for (int count = 0; count < 997; count++) {
+        int missed_samples = 0;
+        int n_samples = 997;
+        for (int count = 0; count < n_samples; count++) {
             // Read sensors
             pm_table_reader.read(reinterpret_cast<char *>(measurements.data()));
             for (int i = 0; i < n_measurements; ++i) {
                 stats[i].add(measurements[i]);
             }
             next_sample_time += sample_period;
+            if (next_sample_time < Clock::now()) {
+                missed_samples++;
+            }
             std::this_thread::sleep_until(next_sample_time);
         }
         int count_interesting = 0;
@@ -340,7 +344,7 @@ int main(int argc, char **argv) {
                 count_interesting++;
             }
         }
-        interesting_index.resize(count_interesting);
+        interesting_index.resize(count_interesting,-1);
         count_interesting = 0;
         for (int i = 0; i < n_measurements; ++i) {
             if (stats[i].sampleVariance() > 0.f) {
@@ -348,7 +352,20 @@ int main(int argc, char **argv) {
                 count_interesting++;
             }
         }
-        std::cout << "count_interesting = " << count_interesting << std::endl;
+        SPDLOG_INFO("The pm_table on this platform contains {} entries. {} of these were changing when reading {} samples with a period of {} ms.",
+            n_measurements,count_interesting,n_samples,sample_period.count());
+        auto first = (std::find(interesting.begin(),interesting.end(),true)-interesting.begin());
+        int last;
+        for (last = n_measurements-1; last>=first; last--) {
+            if (interesting[last])
+                break;
+        }
+        auto num = last - first;
+        SPDLOG_INFO("The consecutive range of changing values includes the entries from index {} until {}, {} values overall.",
+            first, last, num);
+        if (missed_samples)
+            SPDLOG_WARN("Of the {} samples {} were late ({:.0g}%). Your CPU cannnot sample itself with the expected rate.",
+                n_samples, missed_samples, missed_samples*1.f/n_samples);
     }
 
     // --- Pre-allocation of Memory ---
@@ -367,7 +384,7 @@ int main(int argc, char **argv) {
     size_t actual_transition_count = 0;
 
     // NEW: Instantiate the storage for our eye diagram
-    size_t expected_events = static_cast<int>(cycles_opt->value()*1.3f); // allow a bit more than cycles_opt
+    size_t expected_events = static_cast<int>(cycles_opt->value() * 1.3f); // allow a bit more than cycles_opt
     EyeDiagramStorage eye_storage(n_measurements, expected_events);
     EyeCapturer capturer(eye_storage, n_measurements);
 
