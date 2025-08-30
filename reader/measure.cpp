@@ -118,10 +118,10 @@ void measurement_thread_func(int core_id,
         auto wait_time_ms = std::chrono::duration_cast<std::chrono::nanoseconds>(timestamp-old_timestamp).count()/1e6f;
         old_timestamp = timestamp;
 
-        if (timestamp > next_sample_time) {
-            auto overtime_ms = std::chrono::duration_cast<std::chrono::nanoseconds>(timestamp-next_sample_time).count()/1e6f;
-            SPDLOG_WARN("wait_until took too long: overtime={:.1g}ms wait_time={:.6g}ms",overtime_ms,wait_time_ms);
-        }
+        // if (timestamp > next_sample_time) {
+        //     auto overtime_ms = std::chrono::duration_cast<std::chrono::nanoseconds>(timestamp-next_sample_time).count()/1e6f;
+        //     SPDLOG_WARN("wait_until took too long: overtime={:.1g}ms wait_time={:.6g}ms",overtime_ms,wait_time_ms);
+        // }
         int worker_state = g_worker_state.load(std::memory_order_relaxed);
         // Store in pre-allocated buffer
         TimePoint start;
@@ -386,6 +386,7 @@ int main(int argc, char **argv) {
         const auto sample_period = std::chrono::milliseconds(1);
         auto next_sample_time = Clock::now();
         int missed_samples = 0;
+        int missed_sample=-1;
         int n_samples = 997;
         for (int count = 0; count < n_samples; count++) {
             // Read sensors
@@ -396,8 +397,12 @@ int main(int argc, char **argv) {
             next_sample_time += sample_period;
             if (next_sample_time < Clock::now()) {
                 missed_samples++;
+                missed_sample = count;
             }
-            std::this_thread::sleep_until(next_sample_time);
+            // std::this_thread::sleep_until(next_sample_time);
+            while (Clock::now() < next_sample_time) {
+                // Busy wait
+            }
         }
         // precheck_rt destructor runs here -> restores scheduling/affinity and munlockall
 
@@ -440,8 +445,8 @@ int main(int argc, char **argv) {
         }
 
         if (missed_samples)
-            SPDLOG_WARN("Of the {} samples {} were late ({:.0g}%). Your CPU cannnot sample itself with the expected rate.",
-                    n_samples, missed_samples, missed_samples*100.f/n_samples);
+            SPDLOG_WARN("Of the {} samples {} were late ({:.0g}%), e.g. sample {}. Your CPU cannnot sample itself with the expected rate.",
+                    n_samples, missed_samples, missed_samples*100.f/n_samples,missed_sample);
     }
 
     // --- Pre-allocation of Memory ---
