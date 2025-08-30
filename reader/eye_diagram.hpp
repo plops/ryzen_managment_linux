@@ -12,16 +12,20 @@
  * @brief Holds per-bin, per-sensor vectors of floating-point samples.
  *
  * - bins[bin_index][sensor_index] is a vector<float> of samples falling into that time bin.
- * - NUM_BINS is (WINDOW_BEFORE_MS + WINDOW_AFTER_MS).
+ * - num_bins is (window_before_ms + window_after_ms).
  *
  * Vectors are reserved at construction to avoid reallocations during a run.
  */
 struct EyeDiagramStorage {
-    // Configuration
-    static constexpr int WINDOW_BEFORE_MS = 50;   // Look back
-    static constexpr int WINDOW_AFTER_MS = 150;   // Look forward
-    static constexpr int NUM_BINS = WINDOW_BEFORE_MS + WINDOW_AFTER_MS;
-    static constexpr int ZERO_OFFSET_BINS = WINDOW_BEFORE_MS;
+    // Default compile-time fallback values (can be overridden at runtime)
+    static const int DEFAULT_WINDOW_BEFORE_MS = 50;
+    static const int DEFAULT_WINDOW_AFTER_MS = 150;
+
+    // Runtime configuration (set at construction)
+    int window_before_ms{DEFAULT_WINDOW_BEFORE_MS};
+    int window_after_ms{DEFAULT_WINDOW_AFTER_MS};
+    int num_bins{DEFAULT_WINDOW_BEFORE_MS + DEFAULT_WINDOW_AFTER_MS};
+    int zero_offset_bins{DEFAULT_WINDOW_BEFORE_MS};
 
     // bins[bin_index][sensor_index] => vector<float> of values for that bin & sensor
     std::vector<std::vector<std::vector<float>>> bins;
@@ -29,19 +33,25 @@ struct EyeDiagramStorage {
 
     /** @brief Default constructor. */
     EyeDiagramStorage() = default;
+
     /**
      * @brief Construct and pre-allocate inner vectors.
      * @param n_sensors Number of floating-point sensors to track.
      * @param reserve_per_bin Expected number of samples per sensor per bin.
+     * @param window_before_ms Look-back window in milliseconds (defines zero offset).
+     * @param window_after_ms Look-forward window in milliseconds.
      */
-    EyeDiagramStorage(size_t n_sensors, size_t reserve_per_bin);
+    EyeDiagramStorage(size_t n_sensors,
+                      size_t reserve_per_bin,
+                      int window_before_ms = DEFAULT_WINDOW_BEFORE_MS,
+                      int window_after_ms = DEFAULT_WINDOW_AFTER_MS);
 
     /** @brief Clear stored samples but keep reserved capacity. */
     void clear(); // clears stored samples but keeps allocation
 
     /**
      * @brief Add a sample value for a given bin and sensor.
-     * @param bin_index Index of the time bin (0..NUM_BINS-1).
+     * @param bin_index Index of the time bin (0..num_bins-1).
      * @param sensor_index Index of the sensor.
      * @param value Floating-point value to store.
      */

@@ -5,8 +5,16 @@
  *
  * This prevents reallocations during capture if reserve_per_bin is chosen appropriately.
  */
-EyeDiagramStorage::EyeDiagramStorage(size_t n_sensors, size_t reserve_per_bin) {
-    bins.resize(NUM_BINS);
+EyeDiagramStorage::EyeDiagramStorage(size_t n_sensors, size_t reserve_per_bin,
+                                     int window_before_ms, int window_after_ms)
+{
+    this->window_before_ms = window_before_ms;
+    this->window_after_ms = window_after_ms;
+    this->zero_offset_bins = window_before_ms;
+    this->num_bins = window_before_ms + window_after_ms;
+
+    bins.clear();
+    bins.resize(num_bins);
     for (auto &bin : bins) {
         bin.resize(n_sensors);
         for (auto &vec : bin) {
@@ -31,7 +39,7 @@ void EyeDiagramStorage::clear() {
  * Bounds-checked (no exceptions) and silently ignored if indexes are invalid.
  */
 void EyeDiagramStorage::add_sample(int bin_index, size_t sensor_index, float value) {
-    if (bin_index < 0 || bin_index >= NUM_BINS) return;
+    if (bin_index < 0 || bin_index >= num_bins) return;
     if (sensor_index >= bins[bin_index].size()) return;
     bins[bin_index][sensor_index].push_back(value); // The push_back shouldn't allocate. Vector is reserved
 }
