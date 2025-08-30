@@ -16,6 +16,10 @@
 #include <memory>
 #include <cassert>
 #include <sys/mman.h>
+#include <sys/resource.h>
+#include <unistd.h>
+#include <cstdlib>
+#include <span>                   // <-- added
 
 #include "popl.hpp"
 #include <spdlog/spdlog.h>
@@ -28,6 +32,7 @@
 #include "folly/stats/StreamingStats.h"
 
 #include "realtime_guard.hpp" // NEW: RAII helper for realtime + mlockall
+#include "locked_buffer.hpp"  // <-- added: RAII wrapper for mmap/mlock allocations
 
 // --- Global Atomic Flags for Thread Synchronization ---
 // These are used to signal start/stop without using mutexes
@@ -62,6 +67,69 @@ std::atomic<int> g_worker_state = 0; // The single point of communication during
  * the number of observed measurements at each 1ms
  */
 
+// --- New: safe page-aligned locked buffer helpers ---
+
+// Try to allocate an anonymous, page-aligned region and lock it. Returns nullptr on failure.
+// If locking fails due to permissions/rlimit, we return the mmap'd memory without locking
+// so the program can continue with a warning.
+static void *alloc_locked_buffer(size_t bytes, bool &locked_out) {
+    locked_out = false;
+    if (bytes == 0) return nullptr;
+
+    // Round bytes up to page size
+    long page_sz = sysconf(_SC_PAGESIZE);
+    size_t pages = (bytes + page_sz - 1) / page_sz;
+    size_t rounded = pages * page_sz;
+
+    void *ptr = mmap(NULL, rounded, PROT_READ | PROT_WRITE,
+                     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (ptr == MAP_FAILED) {
+        perror("mmap");
+        return nullptr;
+    }
+
+    // Check RLIMIT_MEMLOCK before attempting to lock
+    struct rlimit rl;
+    if (getrlimit(RLIMIT_MEMLOCK, &rl) == 0) {
+        if ((rl.rlim_cur != RLIM_INFINITY) && (rounded > (size_t)rl.rlim_cur)) {
+            // Too big to lock given current rlimit — warn and skip lock
+            SPDLOG_WARN("Requested to mlock {} bytes but RLIMIT_MEMLOCK is {}. Proceeding without lock.",
+                        rounded, (unsigned long)rl.rlim_cur);
+            return ptr;
+        }
+    }
+
+    if (mlock(ptr, rounded) == 0) {
+        locked_out = true;
+    } else {
+        // Non-fatal: warn and continue with unlocked mapping
+        SPDLOG_WARN("mlock failed (errno={}). Proceeding without locked memory.", errno);
+    }
+    return ptr;
+}
+
+static void free_locked_buffer(void *ptr, size_t bytes, bool locked) {
+    if (!ptr) return;
+    long page_sz = sysconf(_SC_PAGESIZE);
+    size_t pages = (bytes + page_sz - 1) / page_sz;
+    size_t rounded = pages * page_sz;
+    if (locked) {
+        if (munlock(ptr, rounded) != 0) {
+            SPDLOG_WARN("munlock failed (errno={})", errno);
+        }
+    }
+    if (munmap(ptr, rounded) != 0) {
+        SPDLOG_WARN("munmap failed (errno={})", errno);
+    }
+}
+
+// --- New: lightweight per-sample view pointing to slices in the locked buffer ---
+struct LocalMeasurement {
+    TimePoint timestamp;
+    int worker_state;
+    float *measurements; // points into a big locked buffer
+};
+
 // --- Thread Functions ---
 
 /**
@@ -77,7 +145,7 @@ std::atomic<int> g_worker_state = 0; // The single point of communication during
  * @param capturer EyeCapturer that bins samples into the EyeDiagramStorage.
  */
 void measurement_thread_func(int core_id,
-                             std::vector<MeasurementSample> &storage,
+                             std::vector<LocalMeasurement> &storage,
                              size_t &sample_count,
                              PmTableReader &pm_table_reader,
                              EyeCapturer &capturer) {
@@ -103,14 +171,16 @@ void measurement_thread_func(int core_id,
         // Store in pre-allocated buffer
         if (sample_count < storage.size()) {
             auto &target = storage[sample_count];
-            auto floatPtr = target.measurements.data();
-            auto charPtr = reinterpret_cast<char *>(floatPtr);
-            // Read sensors
+            auto charPtr = reinterpret_cast<char *>(target.measurements);
+            // Read sensors directly into the locked buffer slice
             pm_table_reader.read(charPtr);
             target.timestamp = timestamp;
             target.worker_state = worker_state;
             // process into eye capturer (bins per sensor)
-            capturer.process_sample(timestamp, worker_state, target.measurements);
+            // forward as std::span<const float> to avoid copy
+            capturer.process_sample(timestamp, worker_state,
+                                    std::span<const float>(target.measurements,
+                                                           pm_table_reader.getPmTableSize() / sizeof(float)));
             sample_count++;
         }
         assert(sample_count < storage.size());
@@ -212,7 +282,7 @@ static float calculate_trimmed_mean(const std::vector<float> &data, float trim_p
  * @param eye_storage Pre-populated EyeDiagramStorage used to compute eye-diagram stats.
  */
 void analyze_and_print_results(int core_id,
-                               const std::vector<MeasurementSample> &measurements, size_t sample_count,
+                               const std::vector<LocalMeasurement> &measurements, size_t sample_count,
                                size_t transition_count,
                                const EyeDiagramStorage &eye_storage) {
     std::cout << "--- Analyzing Core " << core_id << " ---" << std::endl;
@@ -325,8 +395,11 @@ int main(int argc, char **argv) {
 
     std::vector<int> interesting_index;
     {
-        // Promote main thread to realtime and lock memory for the duration of this short pre-sampling check
-        RealtimeGuard precheck_rt(measurement_core, /*priority=*/80, /*lock_memory=*/true);
+        // Promote main thread to realtime for the short pre-sampling check.
+        // NOTE: we do NOT request mlockall here anymore; memory locking is handled
+        // explicitly by alloc_locked_buffer for the measurement buffer to avoid
+        // locking the entire process (which can cause OOM / thrashing).
+        RealtimeGuard precheck_rt(measurement_core, /*priority=*/80, /*lock_memory=*/false);
 
         // Read a few times to determine the pm_table entries that are changing, stores result in interesting_index
         std::vector<float> measurements(n_measurements);
@@ -393,16 +466,33 @@ int main(int argc, char **argv) {
 
     // --- Pre-allocation of Memory ---
     const size_t max_samples_per_run = (period_opt->value() / 1) * cycles_opt->value() + 1000;
-    // 1ms sample rate + buffer
     const size_t max_transitions_per_run = cycles_opt->value() * 2;
 
-    std::vector<MeasurementSample> measurement_storage;
-    measurement_storage.reserve(max_samples_per_run);
-    for (size_t i = 0; i < max_samples_per_run; ++i) {
-        measurement_storage.emplace_back(n_measurements);
+    // Allocate one big page-aligned buffer for all float sensor values and attempt to lock it.
+    size_t total_floats = max_samples_per_run * n_measurements;
+    size_t total_bytes = total_floats * sizeof(float);
+
+    // Use RAII LockedBuffer
+    LockedBuffer locked_buf(total_bytes);
+    if (!locked_buf) {
+        SPDLOG_ERROR("Failed to allocate measurement buffer (mmap + malloc both failed).");
+        return 1;
     }
-    assert(measurement_storage.size() == max_samples_per_run);
-    assert(measurement_storage[0].measurements.size() == n_measurements);
+    SPDLOG_INFO("Allocated {} bytes for measurement buffer (locked={}).", locked_buf.size(), locked_buf.locked());
+
+    // Create LocalMeasurement views pointing into slices of the big buffer
+    std::vector<LocalMeasurement> measurement_view;
+    measurement_view.reserve(max_samples_per_run);
+    for (size_t i = 0; i < max_samples_per_run; ++i) {
+        LocalMeasurement lm;
+        lm.timestamp = Clock::now();
+        lm.worker_state = 0;
+        lm.measurements = reinterpret_cast<float*>(locked_buf.data()) + (i * n_measurements);
+        // Optionally zero first sample slice
+        // memset(lm.measurements, 0, n_measurements * sizeof(float));
+        measurement_view.push_back(lm);
+    }
+
     size_t actual_sample_count = 0;
     size_t actual_transition_count = 0;
 
@@ -413,7 +503,7 @@ int main(int argc, char **argv) {
 
     // File for final output
     std::ofstream outfile(outfile_opt->value());
-    outfile << "round,core_id,timestamp_ns,worker_state"; //"sensor1,sensor2\n";
+    outfile << "round,core_id,timestamp_ns,worker_state";
     for (int i = 0; i < n_measurements; i++) {
         outfile << ",v" << std::to_string(i);
     }
@@ -432,14 +522,13 @@ int main(int argc, char **argv) {
             // Reset state for the new run
             g_run_measurement = false;
             g_run_worker = false;
-            // g_worker_state = 0;
             actual_sample_count = 0;
             actual_transition_count = 0;
             eye_storage.clear(); // call per run to reset while keeping allocation
 
             // --- Launch Threads for the current core test ---
             std::thread measurement_thread(measurement_thread_func, measurement_core,
-                                           std::ref(measurement_storage), std::ref(actual_sample_count),
+                                           std::ref(measurement_view), std::ref(actual_sample_count),
                                            std::ref(pm_table_reader),
                                            std::ref(capturer));
 
@@ -464,22 +553,20 @@ int main(int argc, char **argv) {
             std::cout << "Finished test on core " << core_to_test << std::endl;
 
             // --- Analyze and Store Results (between core runs) ---
-            analyze_and_print_results(core_to_test, measurement_storage, actual_sample_count,
+            analyze_and_print_results(core_to_test, measurement_view, actual_sample_count,
                                       actual_transition_count,
-                                      eye_storage); // NEW: Pass storage to analysis function
+                                      eye_storage);
 
             // Write the raw data for this run to the file
             for (size_t i = 0; i < actual_sample_count; ++i) {
-                auto const &s = measurement_storage[i];
+                auto const &s = measurement_view[i];
                 outfile << round << ","
                         << core_to_test << ","
                         << std::chrono::duration_cast<std::chrono::nanoseconds>(s.timestamp.time_since_epoch()).
                         count() << ","
                         << s.worker_state;
-                // << s.mock_sensor_1 << ","
-                // << s.mock_sensor_2 << "\n";
-                for (const auto &e: s.measurements) {
-                    outfile << "," << e;
+                for (size_t v = 0; v < (size_t)n_measurements; ++v) {
+                    outfile << "," << s.measurements[v];
                 }
                 outfile << std::endl;
             }
@@ -489,6 +576,8 @@ int main(int argc, char **argv) {
     std::cout << "========== EXPERIMENT COMPLETE ==========" << std::endl;
     outfile.close();
     std::cout << "Results saved to " << outfile_opt->value() << std::endl;
+
+    // LockedBuffer destructor will munlock/munmap or free as needed here when it goes out of scope.
 
     spdlog::shutdown(); // Flush all logs before exiting
     return 0;

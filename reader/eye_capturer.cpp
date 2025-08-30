@@ -1,4 +1,5 @@
 #include "eye_capturer.hpp"
+#include <span>               // optional but explicit
 
 /**
  * @brief Construct an EyeCapturer.
@@ -17,7 +18,7 @@ EyeCapturer::EyeCapturer(EyeDiagramStorage &storage, size_t n_sensors)
  *
  * @return true if a full eye has been captured (state is idle)
  */
-bool EyeCapturer::process_sample(const TimePoint &timestamp, int worker_state, const std::vector<float> &measurements) {
+bool EyeCapturer::process_sample(const TimePoint &timestamp, int worker_state, std::span<const float> measurements) {
     // Detect rising edge 0 -> 1
     if (worker_state == 1 && last_worker_state_ == 0) {
         state_ = State::CAPTURING;

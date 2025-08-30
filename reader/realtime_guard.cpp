@@ -6,6 +6,7 @@
 #include <string>
 #include <cerrno>
 #include <pthread.h>
+#include <sys/resource.h>
 
 
 RealtimeGuard::RealtimeGuard(int core_id, int priority, bool lock_memory) noexcept
@@ -55,10 +56,27 @@ RealtimeGuard::RealtimeGuard(int core_id, int priority, bool lock_memory) noexce
 
     // Optionally lock memory to avoid page faults
     if (lock_memory) {
-        if (mlockall(MCL_CURRENT | MCL_FUTURE) != 0) {
-            SPDLOG_WARN("mlockall failed: {}", std::strerror(errno));
+        // Check RLIMIT_MEMLOCK first to avoid pointless mlockall calls that will fail or cause OOM.
+        struct rlimit rl;
+        if (getrlimit(RLIMIT_MEMLOCK, &rl) == 0) {
+            if (rl.rlim_cur == 0) {
+                SPDLOG_WARN("RLIMIT_MEMLOCK is 0: skipping mlockall. Consider increasing memlock limit or using per-buffer mlock.");
+            } else {
+                if (mlockall(MCL_CURRENT | MCL_FUTURE) != 0) {
+                    SPDLOG_WARN("mlockall failed: {}. Avoid calling mlockall on large processes; prefer page-aligned per-buffer mlock (CAP_IPC_LOCK needed).",
+                                std::strerror(errno));
+                } else {
+                    locked_memory_ = true;
+                }
+            }
         } else {
-            locked_memory_ = true;
+            // If getrlimit fails, try mlockall but warn
+            if (mlockall(MCL_CURRENT | MCL_FUTURE) != 0) {
+                SPDLOG_WARN("mlockall failed and getrlimit() failed as well: {}. Prefer per-buffer locking to avoid OOM.",
+                            std::strerror(errno));
+            } else {
+                locked_memory_ = true;
+            }
         }
     }
 

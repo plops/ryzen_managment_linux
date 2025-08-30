@@ -27,6 +27,7 @@ add_executable(pm_measure
         eye_diagram.cpp
         eye_capturer.cpp
         realtime_guard.cpp
+        locked_buffer.cpp
 )
 
 target_link_libraries(pm_measure

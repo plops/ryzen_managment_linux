@@ -2,6 +2,7 @@
 #include "eye_diagram.hpp"
 #include <vector>
 #include <chrono>
+#include <span>
 
 /**
  * @file eye_capturer.hpp
@@ -35,9 +36,9 @@ public:
      *
      * @param timestamp Sample timestamp.
      * @param worker_state Current worker state (0 or 1).
-     * @param measurements Vector of floating-point sensor values.
+     * @param measurements View over floating-point sensor values (no copy).
      */
-    bool process_sample(const TimePoint &timestamp, int worker_state, const std::vector<float> &measurements);
+    bool process_sample(const TimePoint &timestamp, int worker_state, std::span<const float> measurements);
 
 private:
     EyeDiagramStorage &storage_;
