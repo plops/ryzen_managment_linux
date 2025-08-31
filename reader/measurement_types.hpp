@@ -1,7 +1,7 @@
 #pragma once
-#include <vector>
 #include <chrono>
 #include <cstdint>
+#include <vector>
 
 /**
  * @file measurement_types.hpp
