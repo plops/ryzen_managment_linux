@@ -66,7 +66,12 @@ Classes are grouped by their role in the application.
 ### GUI Components
 
 *   `GuiRunner`: The main class for the application. It initializes the GLFW window and ImGui context. It spawns the experiment thread and manages the main render loop. It facilitates communication between the GUI and experiment threads using atomic variables for control (e.g., `manual_mode_`) and a double-buffering scheme for data.
-*   `GuiDataCache`: A helper that decouples data processing from rendering. It holds render-ready plot data (`EyePlotData`). Periodically, it accesses the latest `EyeDiagramStorage` made available by the `GuiRunner`, calculates statistics (like medians) for each time bin, and caches the results. The render loop then uses this pre-processed data to draw the plots, ensuring a smooth frame rate.
+*   `GuiDataCache`: A helper that decouples data processing from rendering. It holds render-ready plot data (`EyePlotData`). Periodically, the GUI thread calls `update()` on this cache. Inside `update()`, it accesses the latest `EyeDiagramStorage` made available by the experiment thread. For each sensor and for each time bin within that sensor's data, it performs the following steps:
+    1.  It takes all the raw float samples collected in that specific time bin.
+    2.  It sorts the samples.
+    3.  It calculates the **median** value of the sorted samples.
+    4.  This single median value becomes the Y-value for the plot at that point in time (the X-value).
+    This process reduces the potentially thousands of individual data points in each bin to a single, statistically robust point, which is then used to draw the line plots. This ensures a smooth frame rate and a clear visualization of the central tendency of the sensor data over time.
 *   `EyePlotData`: A simple struct containing the data needed to render a single plot: the x-axis values (time) and y-axis values (e.g., median sensor reading).
 
 ### Core Data Types
