@@ -43,8 +43,20 @@ void GuiDataCache::update(const EyeDiagramStorage &eye_storage) {
     }
 }
 
-void render_gui(GuiDataCache &cache, int n_total_sensors, const std::vector<int>& interesting_indices, const std::string& experiment_status) {
+void render_gui(GuiDataCache &cache, int n_total_sensors, const std::vector<int> &interesting_indices,
+                const std::string &experiment_status) {
+    static ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                                    ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus;
+    const ImGuiViewport *viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(viewport->Pos);
+    ImGui::SetNextWindowSize(viewport->Size);
+
+#ifdef NDEBUG
+    ImGui::Begin("PM Table Eye Diagrams", nullptr, flags);
+#else
     ImGui::Begin("PM Table Eye Diagrams");
+#endif
+
     ImGui::Text("Experiment Status: %s", experiment_status.c_str());
     ImGui::Separator();
 
@@ -64,22 +76,25 @@ void render_gui(GuiDataCache &cache, int n_total_sensors, const std::vector<int>
                 // Lock the cache just for the brief moment we access the plot data.
                 std::lock_guard<std::mutex> lock(cache.data_mutex);
                 if (cache_idx < cache.plot_data.size() && !cache.plot_data[cache_idx].x_data.empty()) {
-                    const auto& plot = cache.plot_data[cache_idx];
+                    const auto &plot = cache.plot_data[cache_idx];
 
                     // Use a small plot for the grid cell
-                    if (ImPlot::BeginPlot("##EyePlot", ImVec2(100, 60), ImPlotFlags_NoTitle | ImPlotFlags_NoLegend | ImPlotFlags_NoMouseText | ImPlotFlags_NoInputs)) {
+                    if (ImPlot::BeginPlot("##EyePlot", ImVec2(100, 60),
+                                          ImPlotFlags_NoTitle | ImPlotFlags_NoLegend | ImPlotFlags_NoMouseText |
+                                          ImPlotFlags_NoInputs)) {
                         ImPlot::SetupAxes(nullptr, nullptr, ImPlotAxisFlags_NoTickLabels, ImPlotAxisFlags_NoTickLabels);
-                        ImPlot::PlotLine("Median", plot.x_data.data(), plot.y_data.data(), static_cast<int>(plot.x_data.size()));
+                        ImPlot::PlotLine("Median", plot.x_data.data(), plot.y_data.data(),
+                                         static_cast<int>(plot.x_data.size()));
                         ImPlot::EndPlot();
                     }
                 } else {
-                     // Black box if no data yet
-                    ImGui::ColorButton("##empty", ImVec4(0,0,0,1), ImGuiColorEditFlags_NoTooltip, ImVec2(100, 60));
+                    // Black box if no data yet
+                    ImGui::ColorButton("##empty", ImVec4(0, 0, 0, 1), ImGuiColorEditFlags_NoTooltip, ImVec2(100, 60));
                 }
-
             } else {
                 // Non-changing values are just black areas
-                ImGui::ColorButton("##non_interesting", ImVec4(0,0,0,1), ImGuiColorEditFlags_NoTooltip, ImVec2(100, 60));
+                ImGui::ColorButton("##non_interesting", ImVec4(0, 0, 0, 1), ImGuiColorEditFlags_NoTooltip,
+                                   ImVec2(100, 60));
             }
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("Sensor %d", i);
