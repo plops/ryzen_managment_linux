@@ -10,10 +10,10 @@ if (CMAKE_BUILD_TYPE STREQUAL "Release")
             -march=native
             -mtune=native
             -ffast-math
-#            -floop-parallelize-all
-#            -floop-nest-optimize
-#            -floop-interchange
-#            -faggressive-loop-optimizations
+            -floop-parallelize-all
+            -floop-nest-optimize
+            -floop-interchange
+            -faggressive-loop-optimizations
 #-falign-functions
 #-falign-jumps
 #-falign-labels
@@ -44,7 +44,7 @@ if (CMAKE_BUILD_TYPE STREQUAL "Release")
 #-fdse
 #-fearly-inlining
 #-fexceptions
-#-fexpensive-optimizations
+-fexpensive-optimizations
 #-ffast-math
 #-ffinite-loops
 #-ffinite-math-only
@@ -59,8 +59,8 @@ if (CMAKE_BUILD_TYPE STREQUAL "Release")
 #-fgcse-las
 #-fgcse-lm
 #-fgcse-sm
-#-fgraphite
-#-fgraphite-identity
+-fgraphite
+-fgraphite-identity
 #-fguess-branch-probability
 #-fhardcfr-check-exceptions
 #-fhardcfr-check-returning-calls

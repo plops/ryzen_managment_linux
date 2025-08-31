@@ -37,10 +37,6 @@ target_link_libraries(pm_measure
         spdlog::spdlog
 )
 
-
-
-
-
 file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/results)
 
 
