@@ -293,7 +293,8 @@ static float calculate_trimmed_mean(const std::vector<float> &data, float trim_p
  * @param sample_count Number of samples actually recorded.
  * @param transitions Vector of WorkerTransition events recorded by the worker thread.
  * @param transition_count Number of transitions recorded.
- * @param eye_storage Pre-populated EyeDiagramStorage used to compute eye-diagram stats.
+ * @param eye_storage Pre-populated EyeDiagramStorage which contains both the
+ *                    binned data and the mapping to original sensor indices.
  */
 void analyze_and_print_results(int core_id,
                                const std::vector<LocalMeasurement> &measurements, size_t sample_count,
@@ -322,16 +323,20 @@ void analyze_and_print_results(int core_id,
 
     // --- Eye Diagram output for every sensor ---
     const float trim_percent = 10.0f;
-    size_t n_sensors = eye_storage.bins.empty() ? 0 : eye_storage.bins[0].size();
+    // The number of interesting sensors is the size of the outer vector in bins.
+    size_t n_interesting_sensors = eye_storage.bins.size();
 
     if (0)
-    for (size_t sensor = 0; sensor < n_sensors; ++sensor) {
+    for (size_t storage_idx = 0; storage_idx < n_interesting_sensors; ++storage_idx) {
+        // Get original sensor index from the mapping now stored in eye_storage
+        int sensor = eye_storage.original_sensor_indices[storage_idx];
         std::cout << "\n--- Sensor v" << sensor << " Eye Diagram (Median) ---" << std::endl;
         std::cout << "Captured " << eye_storage.event_count << " rising edge events." << std::endl;
         std::cout << "Time(ms)\tMedian\tSamples" << std::endl;
         // iterate using runtime-configured number of bins
         for (int i = 0; i < eye_storage.num_bins; ++i) {
-            const auto &bin = eye_storage.bins[i][sensor];
+            // Access is now bins[sensor_storage_index][bin_index]
+            const auto &bin = eye_storage.bins[storage_idx][i];
             if (!bin.empty()) {
                 int relative_time_ms = i - eye_storage.zero_offset_bins;
                 std::vector<float> sorted_bin = bin;
@@ -349,7 +354,7 @@ void analyze_and_print_results(int core_id,
                 std::endl;
         std::cout << "Time(ms)\tTrimmedMean\tSamples" << std::endl;
         for (int i = 0; i < eye_storage.num_bins; ++i) {
-            const auto &bin = eye_storage.bins[i][sensor];
+            const auto &bin = eye_storage.bins[storage_idx][i];
             if (!bin.empty()) {
                 int relative_time_ms = i - eye_storage.zero_offset_bins;
                 float robust_mean = calculate_trimmed_mean(bin, trim_percent);
@@ -410,6 +415,7 @@ int main(int argc, char **argv) {
     const size_t n_measurements = pm_table_reader.getPmTableSize() / sizeof(float);
 
     std::vector<int> interesting_index;
+    int count_interesting = 0;
     {
         // Promote main thread to realtime for the short pre-sampling check.
         // NOTE: we do NOT request mlockall here anymore; memory locking 444is handled
@@ -443,7 +449,7 @@ int main(int argc, char **argv) {
         }
         // precheck_rt destructor runs here -> restores scheduling/affinity and munlockall
 
-        int count_interesting = 0;
+        count_interesting = 0;
         for (int i = 0; i < n_measurements; ++i) {
             if (stats[i].sampleVariance() > 0.f) {
                 interesting[i] = true;
@@ -522,8 +528,10 @@ int main(int argc, char **argv) {
 
     // NEW: Instantiate the storage for our eye diagram
     size_t expected_events = static_cast<int>(cycles_opt->value() * 1.3f); // allow a bit more than cycles_opt
-    EyeDiagramStorage eye_storage(n_measurements, expected_events);
-    EyeCapturer capturer(eye_storage, n_measurements);
+    // Pass the interesting indices to the storage constructor.
+    EyeDiagramStorage eye_storage(interesting_index, expected_events);
+    // Capturer now infers everything from the storage object.
+    EyeCapturer capturer(eye_storage);
 
     // File for final output
     std::ofstream outfile(outfile_opt->value());

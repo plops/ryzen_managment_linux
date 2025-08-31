@@ -34,78 +34,24 @@ The application consists of three main threads:
 The diagram below illustrates the interaction between these components.
 
 \startuml
-!theme vibrant
-
-package "Main Thread" {
-  actor User
-  usecase "Run Experiment" as Run
-
-  rectangle "main()" as Main {
-    rectangle Buffer [
-      <b>LockedBuffer</b>
-      --
-      Large, page-aligned buffer
-      for all sensor samples.
-      (mmap + mlock)
-    ]
-    rectangle EyeStorage [
-      <b>EyeDiagramStorage</b>
-      --
-      Holds binned data for
-      the eye diagram analysis.
-    ]
-    rectangle Capturer [
-      <b>EyeCapturer</b>
-      --
-      State machine to detect
-      worker edges and fill
-      EyeDiagramStorage.
-    ]
-  }
+object Object1 {
+Alpha
+Bravo
 }
 
-package "Threads" {
-  rectangle "Worker Thread" as Worker {
-    usecase "Busy/Wait Loop"
-  }
-  rectangle "Measurement Thread" as Measurement {
-    usecase "Sample Loop (1ms)" as SampleLoop
-  }
+
+object Object2 {
+Charlie
+Delta
 }
 
-package "Shared State" {
-  rectangle "g_worker_state" [
-    <b>g_worker_state</b>
-    --
-    atomic<int>
-  ]
+
+object Object3 {
+Echo
+Foxtrot
 }
 
-cloud "Kernel / HW" {
-    database "sysfs\n/../pm_table" as pm_table
-    rectangle "CPU Cores" as Cores
-}
 
-User -> Run
-Run -> Main
-
-Main -> Buffer : creates
-Main -> EyeStorage : creates
-Main -> Capturer : creates
-
-Main ..> Worker : spawns
-Main ..> Measurement : spawns
-
-Worker .> Cores : pinned
-Measurement .> Cores : pinned
-
-Worker -> g_worker_state : writes 0 or 1
-g_worker_state -> Measurement : reads
-
-Measurement -> pm_table : reads
-Measurement -> Buffer : writes samples
-Measurement -> Capturer : process_sample()
-Capturer -> EyeStorage : add_sample()
-
+Object1 <|-- Object2
+Object1 <|-- Object3
 \enduml
-

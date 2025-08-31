@@ -3,6 +3,7 @@
 #include <vector>
 #include <chrono>
 #include <span>
+#include <unordered_map>
 
 /**
  * @file eye_capturer.hpp
@@ -22,11 +23,11 @@ using TimePoint = std::chrono::time_point<std::chrono::steady_clock>;
 class EyeCapturer {
 public:
     /**
-     * @brief Construct an EyeCapturer bound to a pre-allocated EyeDiagramStorage.
+     * @brief Construct an EyeCapturer bound to a pre-configured EyeDiagramStorage.
+     * The capturer infers which sensors to track from the storage object.
      * @param storage Storage instance that will receive binned samples.
-     * @param n_sensors Number of sensors (columns, entries in pm_table) expected in each measurement.
      */
-    EyeCapturer(EyeDiagramStorage &storage, size_t n_sensors);
+    EyeCapturer(EyeDiagramStorage &storage);
 
     /**
      * @brief Process one measurement sample.
@@ -42,7 +43,11 @@ public:
 
 private:
     EyeDiagramStorage &storage_;
-    size_t n_sensors_; // Number of floating point entries in pm_table
+    /**
+     * @brief Fast lookup from original sensor index to internal storage index.
+     * This is built once at construction from the storage's `original_sensor_indices`.
+     */
+    std::unordered_map<int, size_t> sensor_to_storage_idx_;
     int last_worker_state_{0};
     TimePoint last_rise_time_;
     enum class State { IDLE, CAPTURING } state_{State::IDLE};
