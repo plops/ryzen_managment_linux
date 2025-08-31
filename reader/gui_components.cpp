@@ -4,8 +4,8 @@
 #include "stats_utils.hpp"
 #include <algorithm>
 #include <numeric> // for std::accumulate
-#include <vector>
 #include <spdlog/spdlog.h>
+#include <vector>
 
 void GuiDataCache::update(const EyeDiagramStorage &eye_storage) {
   // This lock protects our internal plot_data.

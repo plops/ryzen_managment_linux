@@ -32,23 +32,25 @@ void worker_thread_func(int core_id, int period_ms, int duty_cycle_percent,
 extern std::atomic<bool> g_run_measurement;
 extern std::atomic<bool> g_run_worker;
 
-GuiRunner::GuiRunner(
-    int rounds, int num_hardware_threads, int measurement_core, int period,
-    int duty_cycle, int cycles, std::vector<LocalMeasurement> &measurement_view,
-    PmTableReader &pm_table_reader,
-    size_t n_measurements, const std::vector<int> &interesting_index)
+GuiRunner::GuiRunner(int rounds, int num_hardware_threads, int measurement_core,
+                     int period, int duty_cycle, int cycles,
+                     std::vector<LocalMeasurement> &measurement_view,
+                     PmTableReader &pm_table_reader, size_t n_measurements,
+                     const std::vector<int> &interesting_index)
     : rounds_(rounds), num_hardware_threads_(num_hardware_threads),
       measurement_core_(measurement_core), period_(period),
       duty_cycle_(duty_cycle), cycles_(cycles),
       measurement_view_(measurement_view), pm_table_reader_(pm_table_reader),
       n_measurements_(n_measurements), interesting_index_(interesting_index) {
   SPDLOG_INFO("GUI mode enabled. Initializing window and double-buffer...");
-  // --- NEW: Initialize double-buffer for eye diagrams ---
+  // --- Initialize double-buffer for eye diagrams ---
   size_t expected_events = static_cast<int>(cycles * 1.3f);
+  auto window_before_ms = 50;
+  auto window_after_ms = period;
   storage_buffer_a_ =
-      std::make_unique<EyeDiagramStorage>(interesting_index, expected_events);
+      std::make_unique<EyeDiagramStorage>(interesting_index, expected_events, window_before_ms, window_after_ms);
   storage_buffer_b_ =
-      std::make_unique<EyeDiagramStorage>(interesting_index, expected_events);
+      std::make_unique<EyeDiagramStorage>(interesting_index, expected_events, window_before_ms, window_after_ms);
   gui_read_buffer_.store(storage_buffer_a_.get());
 }
 
@@ -169,7 +171,7 @@ void GuiRunner::run_experiment_thread() {
                              ? storage_buffer_b_.get()
                              : storage_buffer_a_.get();
           SPDLOG_INFO("Automatic mode switch capturing into buffer {}",
-            (write_buffer == storage_buffer_a_.get()) ? 'A' : 'B');
+                      (write_buffer == storage_buffer_a_.get()) ? 'A' : 'B');
           capturer.set_storage(*write_buffer);
         }
       }
@@ -225,7 +227,7 @@ int GuiRunner::run() {
     static auto last_update = std::chrono::steady_clock::now();
     if (std::chrono::steady_clock::now() - last_update >
         std::chrono::milliseconds(16)) {
-      // --- NEW: Get the current read buffer atomically ---
+      // --- Get the current read buffer atomically ---
       EyeDiagramStorage *current_read_buffer =
           gui_read_buffer_.load(std::memory_order_acquire);
       gui_cache.update(*current_read_buffer);

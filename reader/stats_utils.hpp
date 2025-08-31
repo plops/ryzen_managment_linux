@@ -22,8 +22,10 @@ static inline float calculate_trimmed_mean(const std::vector<float> &data,
   if (data.empty())
     return 0.0f;
   std::vector<float> sorted = data;
-  std::sort(sorted.begin(), sorted.end());
+  std::ranges::sort(sorted);
   size_t n = sorted.size();
+  if (n==0)
+    return 0.0f;
   size_t trim_count = static_cast<size_t>((trim_percentage / 100.0f) * n);
   if (2 * trim_count >= n) {
     // Not enough elements after trimming; return median as fallback

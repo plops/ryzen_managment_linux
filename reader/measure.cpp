@@ -562,11 +562,10 @@ int main(int argc, char **argv) {
 
   // --- NEW: GUI Mode Logic ---
   // The GUI is now the only mode of operation for this executable.
-  GuiRunner gui_runner(rounds_opt->value(), num_hardware_threads,
-                       measurement_core, period_opt->value(),
-                       duty_cycle_opt->value(), cycles_opt->value(),
-                       measurement_view, pm_table_reader,
-                       n_measurements, interesting_index);
+  GuiRunner gui_runner(
+      rounds_opt->value(), num_hardware_threads, measurement_core,
+      period_opt->value(), duty_cycle_opt->value(), cycles_opt->value(),
+      measurement_view, pm_table_reader, n_measurements, interesting_index);
   return gui_runner.run();
 
   // --- Main Experiment Loop (Original non-GUI path) ---
