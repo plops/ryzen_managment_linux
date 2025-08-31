@@ -3,6 +3,9 @@
 #include "implot.h"
 #include <algorithm>
 #include <vector>
+#include <numeric> // for std::accumulate
+#include "stats_utils.hpp"
+
 
 void GuiDataCache::update(const EyeDiagramStorage &eye_storage) {
     // This lock protects our internal plot_data.
@@ -28,19 +31,12 @@ void GuiDataCache::update(const EyeDiagramStorage &eye_storage) {
         for (int bin_idx = 0; bin_idx < eye_storage.num_bins; ++bin_idx) {
             const auto &bin = eye_storage.bins[i][bin_idx];
             if (!bin.empty()) {
-                // Simplified median calculation
-                std::vector<float> sorted_bin = bin;
-                std::sort(sorted_bin.begin(), sorted_bin.end());
-                float median;
-                size_t n = sorted_bin.size();
-                if (n % 2 == 0) {
-                    median = (sorted_bin[n / 2 - 1] + sorted_bin[n / 2]) / 2.0f;
-                } else {
-                    median = sorted_bin[n / 2];
-                }
+                // Calculate 10% trimmed mean instead of median
+                const float trim_percent = 10.0f;
+                float robust_mean = calculate_trimmed_mean(bin, trim_percent);
 
                 plot_data[i].x_data.push_back(static_cast<float>(bin_idx - eye_storage.zero_offset_bins));
-                plot_data[i].y_data.push_back(median);
+                plot_data[i].y_data.push_back(robust_mean);
             }
         }
     }
@@ -105,7 +101,7 @@ void render_gui(GuiDataCache &cache, int n_total_sensors, const std::vector<int>
                         ImPlot::SetupAxes(nullptr, nullptr, ImPlotAxisFlags_NoTickLabels, ImPlotAxisFlags_NoTickLabels);
                         ImPlot::SetupAxisLimits(ImAxis_X1, -cache.window_before_ms, cache.window_after_ms, ImGuiCond_Always);
                         ImPlot::SetupAxis(ImAxis_Y1, nullptr, ImPlotAxisFlags_AutoFit);
-                        ImPlot::PlotLine("Median", plot.x_data.data(), plot.y_data.data(),
+                        ImPlot::PlotLine("TrimmedMean", plot.x_data.data(), plot.y_data.data(),
                                          static_cast<int>(plot.x_data.size()));
                         ImPlot::EndPlot();
                     }
