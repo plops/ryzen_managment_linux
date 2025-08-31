@@ -213,7 +213,7 @@ void measurement_thread_func(int core_id,
             .count() /
         1e6f;
     if (end2 > next_sample_time) {
-      SPDLOG_ERROR("Cannot maintain sample rate: late by {:.1}ms, read took "
+      SPDLOG_TRACE("Cannot maintain sample rate: late by {:.1}ms, read took "
                    "{:.1}ms, processing took {:.1}ms",
                    (end2 - next_sample_time).count() / 1e6f, read_time_ms,
                    proc_time_ms);

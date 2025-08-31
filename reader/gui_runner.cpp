@@ -116,10 +116,10 @@ void GuiRunner::run_experiment_thread() {
       measurement_thread.join();
 
       gui_read_buffer_.store(write_buffer, std::memory_order_release);
-      write_buffer = (write_buffer == storage_buffer_a_.get())
-                         ? storage_buffer_b_.get()
-                         : storage_buffer_a_.get();
-      SPDLOG_INFO("Switch to buffer {}",
+      // write_buffer = (write_buffer == storage_buffer_a_.get())
+      //                    ? storage_buffer_b_.get()
+      //                    : storage_buffer_a_.get();
+      SPDLOG_INFO("Manual mode switch capturing into buffer {}",
                   (write_buffer == storage_buffer_a_.get()) ? 'A' : 'B');
       capturer.set_storage(*write_buffer);
 
@@ -168,6 +168,8 @@ void GuiRunner::run_experiment_thread() {
           write_buffer = (write_buffer == storage_buffer_a_.get())
                              ? storage_buffer_b_.get()
                              : storage_buffer_a_.get();
+          SPDLOG_INFO("Automatic mode switch capturing into buffer {}",
+            (write_buffer == storage_buffer_a_.get()) ? 'A' : 'B');
           capturer.set_storage(*write_buffer);
         }
       }

@@ -92,7 +92,7 @@ private:
   void run_experiment_thread();
 
   // --- NEW: Manual mode control ---
-  std::atomic<bool> manual_mode_{false};
+  std::atomic<bool> manual_mode_{true};
   std::atomic<int> manual_core_to_test_{1};
   std::atomic<bool> terminate_thread_{false};
 };
