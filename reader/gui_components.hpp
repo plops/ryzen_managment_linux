@@ -4,6 +4,7 @@
 #include <vector>
 #include <string>
 #include <mutex>
+#include <atomic>
 #include "eye_diagram.hpp"
 
 /**
@@ -46,8 +47,12 @@ public:
  * @param n_total_sensors Total number of sensors in the pm_table.
  * @param interesting_indices A map from original sensor index to its position in the cache.
  * @param experiment_status A string describing the current state of the experiment.
+ * @param manual_mode Atomic bool to control auto vs manual mode.
+ * @param manual_core_to_test Atomic int for the user-selected core in manual mode.
+ * @param num_hardware_threads Total number of threads for the core selector range.
  */
-void render_gui(GuiDataCache &cache, int n_total_sensors, const std::vector<int>& interesting_indices, const std::string& experiment_status);
+void render_gui(GuiDataCache &cache, int n_total_sensors, const std::vector<int>& interesting_indices, const std::string& experiment_status,
+                std::atomic<bool>& manual_mode, std::atomic<int>& manual_core_to_test, int num_hardware_threads);
 
 
 #endif // GUI_COMPONENTS_HPP

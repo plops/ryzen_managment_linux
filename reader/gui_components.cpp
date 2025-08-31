@@ -47,7 +47,7 @@ void GuiDataCache::update(const EyeDiagramStorage &eye_storage) {
 }
 
 void render_gui(GuiDataCache &cache, int n_total_sensors, const std::vector<int> &interesting_indices,
-                const std::string &experiment_status) {
+                const std::string &experiment_status, std::atomic<bool>& manual_mode, std::atomic<int>& manual_core_to_test, int num_hardware_threads) {
     static ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
                                     ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus;
     const ImGuiViewport *viewport = ImGui::GetMainViewport();
@@ -61,6 +61,23 @@ void render_gui(GuiDataCache &cache, int n_total_sensors, const std::vector<int>
 #endif
 
     ImGui::Text("Experiment Status: %s", experiment_status.c_str());
+
+    // --- NEW: Manual Mode Controls ---
+    ImGui::Separator();
+    bool is_manual = manual_mode.load();
+    if (ImGui::Checkbox("Manual Control", &is_manual)) {
+        manual_mode.store(is_manual);
+    }
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!is_manual);
+    int core_to_test = manual_core_to_test.load();
+    // Slider for core selection, excluding measurement core 0
+    if (ImGui::SliderInt("Test Core", &core_to_test, 1, num_hardware_threads - 1)) {
+        manual_core_to_test.store(core_to_test);
+    }
+    ImGui::EndDisabled();
+    // --- End NEW ---
+
     ImGui::Separator();
 
     const int num_columns = 16;
@@ -87,6 +104,7 @@ void render_gui(GuiDataCache &cache, int n_total_sensors, const std::vector<int>
                                           ImPlotFlags_NoInputs)) {
                         ImPlot::SetupAxes(nullptr, nullptr, ImPlotAxisFlags_NoTickLabels, ImPlotAxisFlags_NoTickLabels);
                         ImPlot::SetupAxisLimits(ImAxis_X1, -cache.window_before_ms, cache.window_after_ms, ImGuiCond_Always);
+                        ImPlot::SetupAxis(ImAxis_Y1, nullptr, ImPlotAxisFlags_AutoFit);
                         ImPlot::PlotLine("Median", plot.x_data.data(), plot.y_data.data(),
                                          static_cast<int>(plot.x_data.size()));
                         ImPlot::EndPlot();

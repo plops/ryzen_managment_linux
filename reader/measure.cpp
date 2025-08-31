@@ -399,8 +399,8 @@ int main(int argc, char **argv) {
     auto rounds_opt = op.add<Value<int> >("r", "rounds", "How many times to cycle through all cores", 1);
     auto outfile_opt = op.add<Value<std::string> >("o", "output", "Output filename for results",
                                                    "results/output.csv");
-    // --- NEW: Add GUI option ---
-    auto gui_opt = op.add<Switch>("g", "gui", "Enable live GUI display");
+    // --- REMOVED: GUI option is now default ---
+    // auto gui_opt = op.add<Switch>("g", "gui", "Enable live GUI display");
 
     op.parse(argc, argv);
 
@@ -538,26 +538,27 @@ int main(int argc, char **argv) {
     EyeCapturer capturer(eye_storage);
 
     // --- NEW: GUI Mode Logic ---
-    if (gui_opt->is_set()) {
-        GuiRunner gui_runner(
-            rounds_opt->value(),
-            num_hardware_threads,
-            measurement_core,
-            period_opt->value(),
-            duty_cycle_opt->value(),
-            cycles_opt->value(),
-            measurement_view,
-            pm_table_reader,
-            capturer,
-            eye_storage,
-            n_measurements,
-            interesting_index
-        );
-        return gui_runner.run();
-    }
+    // The GUI is now the only mode of operation for this executable.
+    GuiRunner gui_runner(
+        rounds_opt->value(),
+        num_hardware_threads,
+        measurement_core,
+        period_opt->value(),
+        duty_cycle_opt->value(),
+        cycles_opt->value(),
+        measurement_view,
+        pm_table_reader,
+        capturer,
+        eye_storage,
+        n_measurements,
+        interesting_index
+    );
+    return gui_runner.run();
 
 
     // --- Main Experiment Loop (Original non-GUI path) ---
+    // THIS PATH IS NO LONGER REACHABLE AND CAN BE REMOVED
+    /*
     std::ofstream outfile(outfile_opt->value());
     outfile << "round,core_id,timestamp_ns,worker_state";
     // Only write headers for the interesting sensors
@@ -639,4 +640,5 @@ int main(int argc, char **argv) {
 
     spdlog::shutdown(); // Flush all logs before exiting
     return 0;
+    */
 }

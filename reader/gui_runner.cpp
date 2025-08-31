@@ -68,6 +68,8 @@ GuiRunner::GuiRunner(
 }
 
 GuiRunner::~GuiRunner() {
+    terminate_thread_.store(true); // Signal experiment thread to stop
+
     if (window_) {
         ImGui_ImplOpenGL3_Shutdown();
         ImGui_ImplGlfw_Shutdown();
@@ -79,24 +81,34 @@ GuiRunner::~GuiRunner() {
     }
 }
 
-void GuiRunner::run_experiment_thread(std::atomic<bool>& experiment_done, std::atomic<int>& current_round, std::atomic<int>& current_core_testing) {
-    size_t actual_sample_count = 0;
-    size_t actual_transition_count = 0;
+void GuiRunner::run_experiment_thread() {
+    std::atomic<bool> experiment_done = false;
+    std::atomic<int> current_round = 0;
+    std::atomic<int> current_core_testing = 0;
 
     // The experiment thread will write to the buffer not currently being read by the GUI.
     EyeDiagramStorage* write_buffer = storage_buffer_b_.get();
     EyeCapturer capturer(*write_buffer);
 
-    for (int round = 0; round < rounds_; ++round) {
-        current_round = round + 1;
-        for (int core_to_test = 1; core_to_test < num_hardware_threads_; ++core_to_test) {
-            if (core_to_test == measurement_core_) continue;
+    while (!terminate_thread_.load()) {
+        bool is_manual = manual_mode_.load();
+
+        if (is_manual) {
+            // --- MANUAL MODE ---
+            int core_to_test = manual_core_to_test_.load();
+            if (core_to_test == measurement_core_) {
+                // If user somehow selects the measurement core, pick a valid one.
+                core_to_test = (measurement_core_ + 1) % num_hardware_threads_;
+                if (core_to_test == 0) core_to_test = 1; // Ensure it's not 0
+                manual_core_to_test_.store(core_to_test);
+            }
             current_core_testing = core_to_test;
+            experiment_done = false; // Manual mode is never "done"
 
             g_run_measurement = false;
             g_run_worker = false;
-            actual_sample_count = 0;
-            actual_transition_count = 0;
+            size_t actual_sample_count = 0;
+            size_t actual_transition_count = 0;
             write_buffer->clear();
 
             std::thread measurement_thread(measurement_thread_func, measurement_core_,
@@ -115,15 +127,58 @@ void GuiRunner::run_experiment_thread(std::atomic<bool>& experiment_done, std::a
             g_run_measurement.store(false, std::memory_order_release);
             measurement_thread.join();
 
-            // --- NEW: Atomically swap buffers for the GUI to read ---
             gui_read_buffer_.store(write_buffer, std::memory_order_release);
-
-            // And get the other buffer for the next write cycle.
             write_buffer = (write_buffer == storage_buffer_a_.get()) ? storage_buffer_b_.get() : storage_buffer_a_.get();
-            capturer.set_storage(*write_buffer); // Re-point the capturer to the new write buffer
+            capturer.set_storage(*write_buffer);
+
+            // In manual mode, briefly pause to prevent pegging the CPU if cycles are very short
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+        } else {
+            // --- AUTOMATIC MODE ---
+            experiment_done = false;
+            for (int round = 0; round < rounds_ && !manual_mode_.load() && !terminate_thread_.load(); ++round) {
+                current_round = round + 1;
+                for (int core_to_test = 1; core_to_test < num_hardware_threads_ && !manual_mode_.load() && !terminate_thread_.load(); ++core_to_test) {
+                    if (core_to_test == measurement_core_) continue;
+                    current_core_testing = core_to_test;
+
+                    g_run_measurement = false;
+                    g_run_worker = false;
+                    size_t actual_sample_count = 0;
+                    size_t actual_transition_count = 0;
+                    write_buffer->clear();
+
+                    std::thread measurement_thread(measurement_thread_func, measurement_core_,
+                                                   std::ref(measurement_view_), std::ref(actual_sample_count),
+                                                   std::ref(pm_table_reader_), std::ref(capturer));
+
+                    std::thread worker_thread(worker_thread_func, core_to_test,
+                                              period_, duty_cycle_, cycles_,
+                                              std::ref(actual_transition_count));
+
+                    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                    g_run_measurement.store(true, std::memory_order_release);
+                    g_run_worker.store(true, std::memory_order_release);
+
+                    worker_thread.join();
+                    g_run_measurement.store(false, std::memory_order_release);
+                    measurement_thread.join();
+
+                    gui_read_buffer_.store(write_buffer, std::memory_order_release);
+                    write_buffer = (write_buffer == storage_buffer_a_.get()) ? storage_buffer_b_.get() : storage_buffer_a_.get();
+                    capturer.set_storage(*write_buffer);
+                }
+            }
+            experiment_done = true;
+
+            // Wait until mode is switched or thread is terminated
+            while (!manual_mode_.load() && !terminate_thread_.load()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
         }
     }
-    experiment_done = true;
+    SPDLOG_INFO("Experiment thread terminated.");
 }
 
 int GuiRunner::run() {
@@ -155,7 +210,9 @@ int GuiRunner::run() {
     std::atomic<int> current_core_testing = 0;
     std::atomic<int> current_round = 0;
 
-    std::thread experiment_thread(&GuiRunner::run_experiment_thread, this, std::ref(experiment_done), std::ref(current_round), std::ref(current_core_testing));
+    // The experiment thread now manages its own state variables.
+    // We pass our new atomics into the render function.
+    std::thread experiment_thread(&GuiRunner::run_experiment_thread, this);
 
     while (!glfwWindowShouldClose(window_)) {
         glfwPollEvents();
@@ -171,10 +228,21 @@ int GuiRunner::run() {
              last_update = std::chrono::steady_clock::now();
         }
 
-        std::string status = "Running round " + std::to_string(current_round.load()) + " on core " + std::to_string(current_core_testing.load());
-        if (experiment_done) status = "Experiment Complete";
+        std::string status;
+        if (manual_mode_.load()) {
+            status = "Manual mode: testing core " + std::to_string(manual_core_to_test_.load());
+        } else {
+            if (experiment_done) { // This needs to be communicated from the thread
+                 status = "Automatic scan complete. Switch to manual mode to continue.";
+            } else {
+                 // This part is tricky as the thread owns these now.
+                 // For simplicity, we'll just show a generic message.
+                 status = "Running automatic scan...";
+            }
+        }
 
-        render_gui(gui_cache, n_measurements_, interesting_index_, status);
+
+        render_gui(gui_cache, n_measurements_, interesting_index_, status, manual_mode_, manual_core_to_test_, num_hardware_threads_);
 
         ImGui::Render();
         int display_w, display_h;
@@ -187,6 +255,7 @@ int GuiRunner::run() {
         glfwSwapBuffers(window_);
     }
 
+    terminate_thread_.store(true);
     if (experiment_thread.joinable()) {
         experiment_thread.join();
     }

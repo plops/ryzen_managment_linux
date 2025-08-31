@@ -99,7 +99,12 @@ private:
 
 
     // Private helper to launch the experiment thread
-    void run_experiment_thread(std::atomic<bool>& experiment_done, std::atomic<int>& current_round, std::atomic<int>& current_core_testing);
+    void run_experiment_thread();
+
+    // --- NEW: Manual mode control ---
+    std::atomic<bool> manual_mode_{false};
+    std::atomic<int> manual_core_to_test_{1};
+    std::atomic<bool> terminate_thread_{false};
 };
 
 #endif // GUI_RUNNER_HPP
