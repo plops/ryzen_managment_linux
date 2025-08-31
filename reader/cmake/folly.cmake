@@ -1,0 +1,2 @@
+find_package(folly REQUIRED)
+#add_compile_definitions(FOLLY_NO_CONFIG)4

@@ -101,7 +101,7 @@ void measurement_thread_func(int core_id,
     // }
 
     // Promote this measurement thread to realtime for the duration of the sampling loop
-    RealtimeGuard thread_rt(core_id, /*priority=*/80, /*lock_memory=*/false);
+    RealtimeGuard thread_rt(core_id, /*priority=*/98, /*lock_memory=*/false);
 
     // Wait for the signal to start
     while (!g_run_measurement.load(std::memory_order_acquire));
@@ -374,10 +374,10 @@ int main(int argc, char **argv) {
     std::vector<int> interesting_index;
     {
         // Promote main thread to realtime for the short pre-sampling check.
-        // NOTE: we do NOT request mlockall here anymore; memory locking is handled
+        // NOTE: we do NOT request mlockall here anymore; memory locking 444is handled
         // explicitly by alloc_locked_buffer for the measurement buffer to avoid
         // locking the entire process (which can cause OOM / thrashing).
-        RealtimeGuard precheck_rt(measurement_core, /*priority=*/80, /*lock_memory=*/false);
+        RealtimeGuard precheck_rt(measurement_core, /*priority=*/98, /*lock_memory=*/false);
 
         // Read a few times to determine the pm_table entries that are changing, stores result in interesting_index
         std::vector<float> measurements(n_measurements);
@@ -447,6 +447,8 @@ int main(int argc, char **argv) {
         if (missed_samples)
             SPDLOG_WARN("Of the {} samples {} were late ({:.0g}%), e.g. sample {}. Your CPU cannnot sample itself with the expected rate.",
                     n_samples, missed_samples, missed_samples*100.f/n_samples,missed_sample);
+        else
+            SPDLOG_INFO("All samples were on time.");
     }
 
     // --- Pre-allocation of Memory ---
