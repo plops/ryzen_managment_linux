@@ -118,9 +118,9 @@ void GuiRunner::run_experiment_thread() {
       measurement_thread.join();
 
       gui_read_buffer_.store(write_buffer, std::memory_order_release);
-      // write_buffer = (write_buffer == storage_buffer_a_.get())
-      //                    ? storage_buffer_b_.get()
-      //                    : storage_buffer_a_.get();
+      write_buffer = (write_buffer == storage_buffer_a_.get())
+                         ? storage_buffer_b_.get()
+                         : storage_buffer_a_.get();
       SPDLOG_INFO("Manual mode switch capturing into buffer {}",
                   (write_buffer == storage_buffer_a_.get()) ? 'A' : 'B');
       capturer.set_storage(*write_buffer);
@@ -228,8 +228,13 @@ int GuiRunner::run() {
     if (std::chrono::steady_clock::now() - last_update >
         std::chrono::milliseconds(16)) {
       // --- Get the current read buffer atomically ---
+      static EyeDiagramStorage*old_read_buffer = nullptr;
       EyeDiagramStorage *current_read_buffer =
           gui_read_buffer_.load(std::memory_order_acquire);
+      if (old_read_buffer && old_read_buffer!=current_read_buffer) {
+        SPDLOG_INFO("Read buffer has changed.");
+      }
+      old_read_buffer = current_read_buffer;
       gui_cache.update(*current_read_buffer);
       last_update = std::chrono::steady_clock::now();
     }
