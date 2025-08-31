@@ -34,6 +34,8 @@
 
 #include "realtime_guard.hpp" // NEW: RAII helper for realtime + mlockall
 #include "locked_buffer.hpp"  // <-- added: RAII wrapper for mmap/mlock allocations
+#include "gui_components.hpp" // <-- NEW: Include our new GUI header
+#include "gui_runner.hpp"     // <-- NEW: Include the GUI runner
 
 // --- Global Atomic Flags for Thread Synchronization ---
 // These are used to signal start/stop without using mutexes
@@ -397,6 +399,8 @@ int main(int argc, char **argv) {
     auto rounds_opt = op.add<Value<int> >("r", "rounds", "How many times to cycle through all cores", 1);
     auto outfile_opt = op.add<Value<std::string> >("o", "output", "Output filename for results",
                                                    "results/output.csv");
+    // --- NEW: Add GUI option ---
+    auto gui_opt = op.add<Switch>("g", "gui", "Enable live GUI display");
 
     op.parse(argc, argv);
 
@@ -533,7 +537,27 @@ int main(int argc, char **argv) {
     // Capturer now infers everything from the storage object.
     EyeCapturer capturer(eye_storage);
 
-    // File for final output
+    // --- NEW: GUI Mode Logic ---
+    if (gui_opt->is_set()) {
+        GuiRunner gui_runner(
+            rounds_opt->value(),
+            num_hardware_threads,
+            measurement_core,
+            period_opt->value(),
+            duty_cycle_opt->value(),
+            cycles_opt->value(),
+            measurement_view,
+            pm_table_reader,
+            capturer,
+            eye_storage,
+            n_measurements,
+            interesting_index
+        );
+        return gui_runner.run();
+    }
+
+
+    // --- Main Experiment Loop (Original non-GUI path) ---
     std::ofstream outfile(outfile_opt->value());
     outfile << "round,core_id,timestamp_ns,worker_state";
     // Only write headers for the interesting sensors

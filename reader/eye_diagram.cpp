@@ -1,5 +1,6 @@
 #include "eye_diagram.hpp"
 #include <algorithm>
+#include <mutex>
 
 /**
  * @brief Construct EyeDiagramStorage and allocate with default window sizes.

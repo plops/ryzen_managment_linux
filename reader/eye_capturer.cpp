@@ -1,5 +1,6 @@
 #include "eye_capturer.hpp"
 #include <span>               // optional but explicit
+#include <mutex>              // For std::lock_guard
 
 /**
  * @brief Construct an EyeCapturer.
@@ -17,6 +18,15 @@ EyeCapturer::EyeCapturer(EyeDiagramStorage &storage)
 }
 
 /**
+ * @brief Re-points the capturer to a new storage object.
+ */
+void EyeCapturer::set_storage(EyeDiagramStorage &storage) {
+    storage_ = storage;
+    // The storage objects are identical in structure, so the map is still valid.
+    // No need to rebuild sensor_to_storage_idx_.
+}
+
+/**
  * @brief Process a sample and bin sensor values relative to the most recent rising edge.
  *
  * - Detects a rising edge (0->1) and starts capture.
@@ -26,6 +36,7 @@ EyeCapturer::EyeCapturer(EyeDiagramStorage &storage)
  * @return true if a full eye has been captured (state is idle)
  */
 bool EyeCapturer::process_sample(const TimePoint &timestamp, int worker_state, std::span<const float> measurements) {
+
     // Detect rising edge 0 -> 1
     if (worker_state == 1 && last_worker_state_ == 0) {
         state_ = State::CAPTURING;

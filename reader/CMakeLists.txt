@@ -34,12 +34,18 @@ add_executable(pm_measure
         eye_capturer.cpp
         realtime_guard.cpp
         locked_buffer.cpp
+        gui_components.cpp
+        gui_runner.cpp
 )
 
 target_link_libraries(pm_measure
         PRIVATE
         Threads::Threads
         spdlog::spdlog
+        imgui
+        implot
+        glfw
+        GL
 )
 
 file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/results)

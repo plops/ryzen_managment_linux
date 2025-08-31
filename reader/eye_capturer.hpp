@@ -41,6 +41,13 @@ public:
      */
     bool process_sample(const TimePoint &timestamp, int worker_state, std::span<const float> measurements);
 
+    /**
+     * @brief Re-points the capturer to a new storage object.
+     * Used in the double-buffering scheme to swap write buffers.
+     * @param storage The new EyeDiagramStorage to write to.
+     */
+    void set_storage(EyeDiagramStorage &storage);
+
 private:
     EyeDiagramStorage &storage_;
     /**
