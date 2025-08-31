@@ -1,7 +1,7 @@
 set(SPDLOG_SUBMODULE_DIR ${CMAKE_SOURCE_DIR}/../ryzen_pm_table_moonitor/extern/spdlog)
 find_package(spdlog)
 if (NOT spdlog_FOUND)
-    message(STATUS "spdlog not found in dependencies folder")
+    message(STATUS "spdlog not found, looking for source")
     if (EXISTS ${SPDLOG_SUBMODULE_DIR}/CMakeLists.txt)
         add_subdirectory(${SPDLOG_SUBMODULE_DIR} ../ryzen_pm_table_moonitor/extern/spdlog)
         message(STATUS "spdlog will be built from submodule")

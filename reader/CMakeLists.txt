@@ -9,10 +9,15 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-include(cmake/flags.cmake)
-include(cmake/sanitizers.cmake)
-include(cmake/spdlog.cmake)
-include(cmake/folly.cmake)
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+
+include(flags)
+include(sanitizers)
+include(spdlog)
+include(folly)
+include(imgui)
+include(glfw)
+include(implot)
 
 # Add the executable target from our source file
 add_executable(pm_reader main.cpp)
