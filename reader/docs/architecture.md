@@ -1,4 +1,4 @@
-# `pm_measure` Architecture
+# pm_measure Architecture
 
 `pm_measure` is a tool designed to measure and analyze the impact of CPU core activity on power management (PM) sensor values on AMD Ryzen systems. It operates by creating a controlled workload on one core while a high-frequency measurement thread on another core samples sensor data from the `ryzen_smu` driver's `pm_table`.
 
