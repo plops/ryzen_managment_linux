@@ -536,8 +536,9 @@ int main(int argc, char **argv) {
     // File for final output
     std::ofstream outfile(outfile_opt->value());
     outfile << "round,core_id,timestamp_ns,worker_state";
-    for (int i = 0; i < n_measurements; i++) {
-        outfile << ",v" << std::to_string(i);
+    // Only write headers for the interesting sensors
+    for (int sensor_idx : interesting_index) {
+        outfile << ",v" << std::to_string(sensor_idx);
     }
     outfile << std::endl;
 
@@ -597,8 +598,9 @@ int main(int argc, char **argv) {
                         << std::chrono::duration_cast<std::chrono::nanoseconds>(s.timestamp.time_since_epoch()).
                         count() << ","
                         << s.worker_state;
-                for (size_t v = 0; v < (size_t) n_measurements; ++v) {
-                    outfile << "," << s.measurements[v];
+                // Only write values for the interesting sensors
+                for (int sensor_idx : interesting_index) {
+                    outfile << "," << s.measurements[sensor_idx];
                 }
                 outfile << std::endl;
             }
