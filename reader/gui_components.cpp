@@ -12,6 +12,9 @@ void GuiDataCache::update(const EyeDiagramStorage &eye_storage) {
     // so we no longer need to lock it here.
     // std::lock_guard<std::mutex> eye_lock(eye_storage.storage_mutex); // REMOVED
 
+    window_before_ms = eye_storage.window_before_ms;
+    window_after_ms = eye_storage.window_after_ms;
+
     size_t n_interesting_sensors = eye_storage.bins.size();
     if (plot_data.size() != n_interesting_sensors) {
         plot_data.resize(n_interesting_sensors);
@@ -83,6 +86,7 @@ void render_gui(GuiDataCache &cache, int n_total_sensors, const std::vector<int>
                                           ImPlotFlags_NoTitle | ImPlotFlags_NoLegend | ImPlotFlags_NoMouseText |
                                           ImPlotFlags_NoInputs)) {
                         ImPlot::SetupAxes(nullptr, nullptr, ImPlotAxisFlags_NoTickLabels, ImPlotAxisFlags_NoTickLabels);
+                        ImPlot::SetupAxisLimits(ImAxis_X1, -cache.window_before_ms, cache.window_after_ms, ImGuiCond_Always);
                         ImPlot::PlotLine("Median", plot.x_data.data(), plot.y_data.data(),
                                          static_cast<int>(plot.x_data.size()));
                         ImPlot::EndPlot();

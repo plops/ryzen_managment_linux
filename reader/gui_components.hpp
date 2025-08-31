@@ -26,6 +26,8 @@ class GuiDataCache {
 public:
     std::vector<EyePlotData> plot_data;
     std::mutex data_mutex;
+    int window_before_ms = 0;
+    int window_after_ms = 0;
 
     /**
      * @brief Updates the cached plot data from the raw eye storage.
