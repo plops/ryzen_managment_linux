@@ -20,6 +20,7 @@
 #include <unistd.h>
 #include <cstdlib>
 #include <span>                   // <-- added
+#include <time.h>                 // <-- added for clock_nanosleep / timespec
 
 #include "popl.hpp"
 #include <spdlog/spdlog.h>
@@ -77,6 +78,40 @@ struct LocalMeasurement {
     float *measurements; // points into a big locked buffer
 };
 
+// --- New: helper for hybrid sleep/spin and light-weight cpu relax ---
+// Brief: On Linux (gcc, x86_64/ryzen) use clock_nanosleep for coarse sleep
+// and the PAUSE instruction in the final spin to reduce power/jitter.
+static inline void cpu_relax() {
+    // x86 PAUSE to reduce power and improve spin-loop performance
+    asm volatile("pause" ::: "memory");
+}
+
+static void wait_until(const Clock::time_point &deadline) {
+    using namespace std::chrono;
+    auto now = Clock::now();
+    if (deadline <= now) return;
+
+    // How long we will spin actively at the end. Tuneable:
+    const auto spin_threshold = microseconds(200); // 200us gives a good tradeoff on many CPUs; tweak as needed
+
+    auto remaining = deadline - now;
+    if (remaining > spin_threshold) {
+        // Sleep until (deadline - spin_threshold) using CLOCK_MONOTONIC absolute sleep
+        auto wake_time = deadline - spin_threshold;
+        auto ns = time_point_cast<nanoseconds>(wake_time).time_since_epoch().count();
+        timespec ts;
+        ts.tv_sec = static_cast<time_t>(ns / 1'000'000'000);
+        ts.tv_nsec = static_cast<long>(ns % 1'000'000'000);
+        // ignore EINTR here; if interrupted we fall through to the spin phase
+        clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &ts, nullptr);
+    }
+
+    // Final short spin using PAUSE
+    while (Clock::now() < deadline) {
+        cpu_relax();
+    }
+}
+
 // --- Thread Functions ---
 
 /**
@@ -103,8 +138,10 @@ void measurement_thread_func(int core_id,
     // Promote this measurement thread to realtime for the duration of the sampling loop
     RealtimeGuard thread_rt(core_id, /*priority=*/98, /*lock_memory=*/false);
 
-    // Wait for the signal to start
-    while (!g_run_measurement.load(std::memory_order_acquire));
+    // Wait for the signal to start (use a polite spin)
+    while (!g_run_measurement.load(std::memory_order_acquire)) {
+        cpu_relax();
+    }
 
     const auto sample_period = std::chrono::milliseconds(1);
     auto next_sample_time = Clock::now();
@@ -162,9 +199,8 @@ void measurement_thread_func(int core_id,
             //              proc_time_ms);
         }
         // std::this_thread::sleep_until(next_sample_time-std::chrono::nanoseconds(30'000));
-        while (Clock::now() < next_sample_time) {
-            // Busy wait
-        }
+        // Replace tight busy-wait with hybrid sleep-then-spin
+        wait_until(next_sample_time);
 
     }
 
@@ -197,8 +233,10 @@ void worker_thread_func(int core_id,
     const auto wait_duration = period - busy_duration;
     transition_count = 0;
 
-    // Wait for the signal to start
-    while (!g_run_worker.load(std::memory_order_acquire));
+    // Wait for the signal to start (polite spin)
+    while (!g_run_worker.load(std::memory_order_acquire)) {
+        cpu_relax();
+    }
 
     for (int i = 0; i < num_cycles; ++i) {
         // --- BUSY PHASE ---
@@ -400,9 +438,8 @@ int main(int argc, char **argv) {
                 missed_sample = count;
             }
             // std::this_thread::sleep_until(next_sample_time);
-            while (Clock::now() < next_sample_time) {
-                // Busy wait
-            }
+            // Replace tight busy-wait with hybrid sleep-spin for the precheck loop as well
+            wait_until(next_sample_time);
         }
         // precheck_rt destructor runs here -> restores scheduling/affinity and munlockall
 
