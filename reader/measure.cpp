@@ -560,23 +560,12 @@ int main(int argc, char **argv) {
     measurement_view.push_back(lm);
   }
 
-  size_t actual_sample_count = 0;
-  size_t actual_transition_count = 0;
-
-  // NEW: Instantiate the storage for our eye diagram
-  size_t expected_events = static_cast<int>(
-      cycles_opt->value() * 1.3f); // allow a bit more than cycles_opt
-  // Pass the interesting indices to the storage constructor.
-  EyeDiagramStorage eye_storage(interesting_index, expected_events);
-  // Capturer now infers everything from the storage object.
-  EyeCapturer capturer(eye_storage);
-
   // --- NEW: GUI Mode Logic ---
   // The GUI is now the only mode of operation for this executable.
   GuiRunner gui_runner(rounds_opt->value(), num_hardware_threads,
                        measurement_core, period_opt->value(),
                        duty_cycle_opt->value(), cycles_opt->value(),
-                       measurement_view, pm_table_reader, capturer, eye_storage,
+                       measurement_view, pm_table_reader,
                        n_measurements, interesting_index);
   return gui_runner.run();
 

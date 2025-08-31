@@ -5,14 +5,11 @@
 #include <algorithm>
 #include <numeric> // for std::accumulate
 #include <vector>
+#include <spdlog/spdlog.h>
 
 void GuiDataCache::update(const EyeDiagramStorage &eye_storage) {
   // This lock protects our internal plot_data.
   std::lock_guard<std::mutex> lock(data_mutex);
-
-  // The EyeDiagramStorage is now a snapshot provided by the GuiRunner,
-  // so we no longer need to lock it here.
-  // std::lock_guard<std::mutex> eye_lock(eye_storage.storage_mutex); // REMOVED
 
   window_before_ms = eye_storage.window_before_ms;
   window_after_ms = eye_storage.window_after_ms;
@@ -30,7 +27,7 @@ void GuiDataCache::update(const EyeDiagramStorage &eye_storage) {
     for (int bin_idx = 0; bin_idx < eye_storage.num_bins; ++bin_idx) {
       const auto &bin = eye_storage.bins[i][bin_idx];
       if (!bin.empty()) {
-        // Calculate 10% trimmed mean instead of median
+        // Calculate 10% trimmed mean
         const float trim_percent = 10.0f;
         float robust_mean = calculate_trimmed_mean(bin, trim_percent);
 

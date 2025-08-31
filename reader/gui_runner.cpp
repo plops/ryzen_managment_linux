@@ -36,9 +36,6 @@ GuiRunner::GuiRunner(
     int rounds, int num_hardware_threads, int measurement_core, int period,
     int duty_cycle, int cycles, std::vector<LocalMeasurement> &measurement_view,
     PmTableReader &pm_table_reader,
-    EyeCapturer &capturer, // Note: capturer is no longer stored as a member
-    EyeDiagramStorage
-        &eye_storage, // Note: eye_storage is no longer stored as a member
     size_t n_measurements, const std::vector<int> &interesting_index)
     : rounds_(rounds), num_hardware_threads_(num_hardware_threads),
       measurement_core_(measurement_core), period_(period),
@@ -212,8 +209,6 @@ int GuiRunner::run() {
 
   GuiDataCache gui_cache;
   std::atomic<bool> experiment_done = false;
-  std::atomic<int> current_core_testing = 0;
-  std::atomic<int> current_round = 0;
 
   // The experiment thread now manages its own state variables.
   // We pass our new atomics into the render function.

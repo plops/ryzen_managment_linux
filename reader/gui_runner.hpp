@@ -42,8 +42,7 @@ public:
   GuiRunner(int rounds, int num_hardware_threads, int measurement_core,
             int period, int duty_cycle, int cycles,
             std::vector<LocalMeasurement> &measurement_view,
-            PmTableReader &pm_table_reader, EyeCapturer &capturer,
-            EyeDiagramStorage &eye_storage, size_t n_measurements,
+            PmTableReader &pm_table_reader, size_t n_measurements,
             const std::vector<int> &interesting_index);
 
   ~GuiRunner();
