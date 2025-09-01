@@ -269,8 +269,9 @@ elseif (CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
 else ()
     message(STATUS "Debug build")
     add_compile_options(
-            -O0
+            -Og
             -g
+            -ggdb3
     )
     add_compile_definitions(
             DEBUG
