@@ -16,6 +16,7 @@ void GuiDataCache::update(const EyeDiagramStorage &eye_storage) {
 
   size_t n_interesting_sensors = eye_storage.bins.size();
   if (plot_data.size() != n_interesting_sensors) {
+    SPDLOG_INFO("Adjusting the size of plot_data[] to hold {} interesting values.", n_interesting_sensors);
     plot_data.resize(n_interesting_sensors);
   }
 

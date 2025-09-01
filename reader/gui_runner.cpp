@@ -45,7 +45,7 @@ GuiRunner::GuiRunner(int rounds, int num_hardware_threads, int measurement_core,
   SPDLOG_INFO("GUI mode enabled. Initializing window and double-buffer...");
   // --- Initialize double-buffer for eye diagrams ---
   size_t expected_events = static_cast<int>(cycles * 1.3f);
-  auto window_before_ms = 50;
+  auto window_before_ms = 0;
   auto window_after_ms = period;
   storage_buffer_a_ =
       std::make_unique<EyeDiagramStorage>(interesting_index, expected_events, window_before_ms, window_after_ms);
@@ -121,8 +121,9 @@ void GuiRunner::run_experiment_thread() {
       write_buffer = (write_buffer == storage_buffer_a_.get())
                          ? storage_buffer_b_.get()
                          : storage_buffer_a_.get();
-      SPDLOG_INFO("Manual mode switch capturing into buffer {}",
-                  (write_buffer == storage_buffer_a_.get()) ? 'A' : 'B');
+      SPDLOG_INFO("Manual mode switch capturing into buffer {} at {:p}",
+                  (write_buffer == storage_buffer_a_.get()) ? 'A' : 'B',
+                  static_cast<void*>(write_buffer));
       capturer.set_storage(*write_buffer);
 
       // In manual mode, briefly pause to prevent pegging the CPU if cycles are
@@ -232,7 +233,7 @@ int GuiRunner::run() {
       EyeDiagramStorage *current_read_buffer =
           gui_read_buffer_.load(std::memory_order_acquire);
       if (old_read_buffer && old_read_buffer!=current_read_buffer) {
-        SPDLOG_INFO("Read buffer has changed.");
+        SPDLOG_INFO("Read buffer has changed: {:p}.", reinterpret_cast<void*>(current_read_buffer));
       }
       old_read_buffer = current_read_buffer;
       gui_cache.update(*current_read_buffer);
