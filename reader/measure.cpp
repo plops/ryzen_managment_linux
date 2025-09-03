@@ -568,99 +568,101 @@ int main(int argc, char **argv) {
     measurement_view.push_back(lm);
   }
 
-  // --- NEW: GUI Mode Logic ---
-  // The GUI is now the only mode of operation for this executable.
-  GuiRunner gui_runner(
-    rounds_opt->value(), num_hardware_threads, measurement_core,
-    period_opt->value(), duty_cycle_opt->value(), cycles_opt->value(),
-    measurement_view, pm_table_reader, n_measurements, interesting_index);
-  return gui_runner.run();
+  // // ---  GUI Mode Logic ---
+  // GuiRunner gui_runner(
+  //   rounds_opt->value(), num_hardware_threads, measurement_core,
+  //   period_opt->value(), duty_cycle_opt->value(), cycles_opt->value(),
+  //   measurement_view, pm_table_reader, n_measurements, interesting_index);
+  // return gui_runner.run();
 
   // --- Main Experiment Loop (Original non-GUI path) ---
-  // THIS PATH IS NO LONGER REACHABLE AND CAN BE REMOVED
-  /*
+
   std::ofstream outfile(outfile_opt->value());
   outfile << "round,core_id,timestamp_ns,worker_state";
   // Only write headers for the interesting sensors
-  for (int sensor_idx : interesting_index) {
-      outfile << ",v" << std::to_string(sensor_idx);
+  for (int sensor_idx: interesting_index) {
+    outfile << ",v" << std::to_string(sensor_idx);
   }
   outfile << std::endl;
 
+  EyeDiagramStorage eye_storage(interesting_index, max_transitions_per_run,
+                                /*window_before_ms=*/50,
+                                /*window_after_ms=*/period_opt->value());
+  EyeCapturer capturer(eye_storage);
+
   // --- Main Experiment Loop ---
   for (int round = 0; round < rounds_opt->value(); ++round) {
-      std::cout << "========== STARTING ROUND " << round + 1 << " OF " <<
-  rounds_opt->value() << " ==========" << std::endl;
+    std::cout << "========== STARTING ROUND " << round + 1 << " OF " <<
+        rounds_opt->value() << " ==========" << std::endl;
 
-      for (int core_to_test = 1; core_to_test < num_hardware_threads;
-  ++core_to_test) { if (core_to_test == measurement_core) continue;
+    for (int core_to_test = 1; core_to_test < num_hardware_threads;
+         ++core_to_test) {
+      if (core_to_test == measurement_core) continue;
 
-          std::cout << "Starting test on core " << core_to_test << std::endl;
+      std::cout << "Starting test on core " << core_to_test << std::endl;
 
-          // Reset state for the new run
-          g_run_measurement = false;
-          g_run_worker = false;
-          actual_sample_count = 0;
-          actual_transition_count = 0;
-          eye_storage.clear(); // call per run to reset while keeping allocation
+      // Reset state for the new run
+      g_run_measurement = false;
+      g_run_worker = false;
+      size_t actual_sample_count = 0;
+      size_t actual_transition_count = 0;
+      eye_storage.clear(); // call per run to reset while keeping allocation
 
-          // --- Launch Threads for the current core test ---
-          std::thread measurement_thread(measurement_thread_func,
-  measurement_core, std::ref(measurement_view), std::ref(actual_sample_count),
-                                         std::ref(pm_table_reader),
-                                         std::ref(capturer));
+      // --- Launch Threads for the current core test ---
+      std::thread measurement_thread(measurement_thread_func,
+                                     measurement_core, std::ref(measurement_view), std::ref(actual_sample_count),
+                                     std::ref(pm_table_reader),
+                                     std::ref(capturer));
 
-          std::thread worker_thread(worker_thread_func, core_to_test,
-                                    period_opt->value(),
-  duty_cycle_opt->value(), cycles_opt->value(),
-                                    std::ref(actual_transition_count));
+      std::thread worker_thread(worker_thread_func, core_to_test,
+                                period_opt->value(),
+                                duty_cycle_opt->value(), cycles_opt->value(),
+                                std::ref(actual_transition_count));
 
-          // Give threads a moment to initialize and set affinity
-          std::this_thread::sleep_for(std::chrono::milliseconds(50));
+      // Give threads a moment to initialize and set affinity
+      std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
-          // Signal threads to start the measurement and workload
-          g_run_measurement.store(true, std::memory_order_release);
-          g_run_worker.store(true, std::memory_order_release);
+      // Signal threads to start the measurement and workload
+      g_run_measurement.store(true, std::memory_order_release);
+      g_run_worker.store(true, std::memory_order_release);
 
-          // Wait for the worker to finish its cycles
-          worker_thread.join();
+      // Wait for the worker to finish its cycles
+      worker_thread.join();
 
-          // Signal the measurement thread to stop and wait for it to finish
-          g_run_measurement.store(false, std::memory_order_release);
-          measurement_thread.join();
+      // Signal the measurement thread to stop and wait for it to finish
+      g_run_measurement.store(false, std::memory_order_release);
+      measurement_thread.join();
 
-          std::cout << "Finished test on core " << core_to_test << std::endl;
+      std::cout << "Finished test on core " << core_to_test << std::endl;
 
-          // --- Analyze and Store Results (between core runs) ---
-          analyze_and_print_results(core_to_test, measurement_view,
-  actual_sample_count, actual_transition_count, eye_storage);
+      // --- Analyze and Store Results (between core runs) ---
+      analyze_and_print_results(core_to_test, measurement_view,
+                                actual_sample_count, actual_transition_count, eye_storage);
 
-          // Write the raw data for this run to the file
-          for (size_t i = 0; i < actual_sample_count; ++i) {
-              auto const &s = measurement_view[i];
-              outfile << round << ","
-                      << core_to_test << ","
-                      <<
-  std::chrono::duration_cast<std::chrono::nanoseconds>(s.timestamp.time_since_epoch()).
-                      count() << ","
-                      << s.worker_state;
-              // Only write values for the interesting sensors
-              for (int sensor_idx : interesting_index) {
-                  outfile << "," << s.measurements[sensor_idx];
-              }
-              outfile << std::endl;
-          }
+      // Write the raw data for this run to the file
+      for (size_t i = 0; i < actual_sample_count; ++i) {
+        auto const &s = measurement_view[i];
+        outfile << round << ","
+            << core_to_test << ","
+            <<
+            std::chrono::duration_cast<std::chrono::nanoseconds>(s.timestamp.time_since_epoch()).
+            count() << ","
+            << s.worker_state;
+        // Only write values for the interesting sensors
+        for (int sensor_idx: interesting_index) {
+          outfile << "," << s.measurements[sensor_idx];
+        }
+        outfile << std::endl;
       }
+    }
   }
 
   std::cout << "========== EXPERIMENT COMPLETE ==========" << std::endl;
   outfile.close();
   std::cout << "Results saved to " << outfile_opt->value() << std::endl;
 
-  // LockedBuffer destructor will munlock/munmap or free as needed here when it
-  goes out of scope.
+  // LockedBuffer destructor will munlock/munmap or free as needed here when it goes out of scope.
 
   spdlog::shutdown(); // Flush all logs before exiting
   return 0;
-  */
 }
