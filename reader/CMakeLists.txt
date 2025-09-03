@@ -11,8 +11,10 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
+# Include custom modules
 include(flags)
 include(sanitizers)
+include(PGO)
 include(spdlog)
 include(folly)
 include(imgui)
