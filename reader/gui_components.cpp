@@ -16,11 +16,14 @@ void GuiDataCache::update(const EyeDiagramStorage &eye_storage) {
 
   size_t n_interesting_sensors = eye_storage.bins.size();
   if (plot_data.size() != n_interesting_sensors) {
-    SPDLOG_INFO("Adjusting the size of plot_data[] to hold {} interesting values.", n_interesting_sensors);
+    SPDLOG_INFO(
+        "Adjusting the size of plot_data[] to hold {} interesting values.",
+        n_interesting_sensors);
     plot_data.resize(n_interesting_sensors);
   }
 
-  SPDLOG_TRACE("Filling plot data with measurements from {:p}.", static_cast<const void*>(&eye_storage));
+  SPDLOG_TRACE("Filling plot data with measurements from {:p}.",
+               static_cast<const void *>(&eye_storage));
   for (size_t i = 0; i < n_interesting_sensors; ++i) {
     plot_data[i].original_sensor_index = eye_storage.original_sensor_indices[i];
     plot_data[i].x_data.clear();

@@ -1,3 +1,5 @@
+# an attempt to use profile guided optimization
+
 export CXXFLAGS="
 -O3 -march=native -mtune=native -ffast-math \
     -floop-parallelize-all -floop-nest-optimize \

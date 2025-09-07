@@ -100,7 +100,7 @@ static void wait_until(const Clock::time_point &deadline) {
 
   // How long we will spin actively at the end. Tuneable:
   const auto spin_threshold = microseconds(
-    200); // 200us gives a good tradeoff on many CPUs; tweak as needed
+      200); // 200us gives a good tradeoff on many CPUs; tweak as needed
 
   auto remaining = deadline - now;
   if (remaining > spin_threshold) {
@@ -165,8 +165,8 @@ void measurement_thread_func(int core_id,
     TimePoint timestamp = Clock::now();
 
     auto wait_time_ms = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                          timestamp - old_timestamp)
-                        .count() /
+                            timestamp - old_timestamp)
+                            .count() /
                         1e6f;
     old_timestamp = timestamp;
 
@@ -192,10 +192,10 @@ void measurement_thread_func(int core_id,
       // forward as std::span<const float> to avoid copy
 
       capturer.process_sample(
-        timestamp, worker_state,
-        std::span<const float>(target.measurements,
-                               pm_table_reader.getPmTableSize() /
-                               sizeof(float)));
+          timestamp, worker_state,
+          std::span<const float>(target.measurements,
+                                 pm_table_reader.getPmTableSize() /
+                                     sizeof(float)));
       sample_count++;
     }
     auto end = Clock::now();
@@ -206,11 +206,11 @@ void measurement_thread_func(int core_id,
     auto end2 = Clock::now();
     auto read_time_ms =
         std::chrono::duration_cast<std::chrono::nanoseconds>(end2 - start)
-        .count() /
+            .count() /
         1e6f;
     auto proc_time_ms =
         std::chrono::duration_cast<std::chrono::nanoseconds>(end - start)
-        .count() /
+            .count() /
         1e6f;
     if (end2 > next_sample_time) {
       SPDLOG_TRACE("Cannot maintain sample rate: late by {:.1}ms, read took "
@@ -250,7 +250,7 @@ void worker_thread_func(int core_id, int period_ms, int duty_cycle_percent,
                         int num_cycles, size_t &transition_count) {
   if (!set_thread_affinity(core_id)) {
     std::cerr << "Warning: Failed to set worker thread affinity to core "
-        << core_id << std::endl;
+              << core_id << std::endl;
   }
 
   const auto period = std::chrono::milliseconds(period_ms);
@@ -296,14 +296,14 @@ void worker_thread_func(int core_id, int period_ms, int duty_cycle_percent,
  *                    binned data and the mapping to original sensor indices.
  */
 void analyze_and_print_results(
-  int core_id, const std::vector<LocalMeasurement> &measurements,
-  size_t sample_count, size_t transition_count,
-  const EyeDiagramStorage &eye_storage) {
+    int core_id, const std::vector<LocalMeasurement> &measurements,
+    size_t sample_count, size_t transition_count,
+    const EyeDiagramStorage &eye_storage) {
   std::cout << "--- Analyzing Core " << core_id << " ---" << std::endl;
   std::cout << "Collected " << sample_count << " measurement samples."
-      << std::endl;
+            << std::endl;
   std::cout << "Recorded " << transition_count << " worker transitions."
-      << std::endl;
+            << std::endl;
 
   // compute simple busy/wait means for sensor 17 as before (unchanged)
   std::vector<double> busy_samples;
@@ -326,7 +326,7 @@ void analyze_and_print_results(
     std::cout << "Mean THM value while BUSY:   " << busy_mean << std::endl;
     std::cout << "Mean THM value while WAITING: " << wait_mean << std::endl;
     std::cout << "Mean Correlation (Difference): " << busy_mean - wait_mean
-        << std::endl;
+              << std::endl;
   }
 
   // --- Eye Diagram output for every sensor ---
@@ -340,9 +340,9 @@ void analyze_and_print_results(
       // Get original sensor index from the mapping now stored in eye_storage
       int sensor = eye_storage.original_sensor_indices[storage_idx];
       std::cout << "\n--- Sensor v" << sensor << " Eye Diagram (Median) ---"
-          << std::endl;
+                << std::endl;
       std::cout << "Captured " << eye_storage.event_count
-          << " rising edge events." << std::endl;
+                << " rising edge events." << std::endl;
       std::cout << "Time(ms)\tMedian\tSamples" << std::endl;
       // iterate using runtime-configured number of bins
       for (int i = 0; i < eye_storage.num_bins; ++i) {
@@ -359,13 +359,13 @@ void analyze_and_print_results(
           else
             median = sorted_bin[n / 2];
           std::cout << relative_time_ms << "\t\t" << std::fixed
-              << std::setprecision(4) << median << "\t" << bin.size()
-              << std::endl;
+                    << std::setprecision(4) << median << "\t" << bin.size()
+                    << std::endl;
         }
       }
 
       std::cout << "\n--- Sensor v" << sensor << " Eye Diagram (TrimmedMean "
-          << trim_percent << "%) ---" << std::endl;
+                << trim_percent << "%) ---" << std::endl;
       std::cout << "Time(ms)\tTrimmedMean\tSamples" << std::endl;
       for (int i = 0; i < eye_storage.num_bins; ++i) {
         const auto &bin = eye_storage.bins[storage_idx][i];
@@ -373,8 +373,8 @@ void analyze_and_print_results(
           int relative_time_ms = i - eye_storage.zero_offset_bins;
           float robust_mean = calculate_trimmed_mean(bin, trim_percent);
           std::cout << relative_time_ms << "\t\t" << std::fixed
-              << std::setprecision(4) << robust_mean << "\t" << bin.size()
-              << std::endl;
+                    << std::setprecision(4) << robust_mean << "\t" << bin.size()
+                    << std::endl;
         }
       }
     }
@@ -400,26 +400,27 @@ int main(int argc, char **argv) {
 
   if (geteuid() != 0) {
     SPDLOG_WARN("Warning: This program works better with root privileges to "
-      "read from sysfs with low latency.");
+                "read from sysfs with low latency.");
     SPDLOG_WARN("Please run with sudo.");
   }
 
   // --- Command Line Parsing ---
   OptionParser op("Allowed options");
   auto help_option = op.add<Switch>("h", "help", "produce help message");
-  auto all_option = op.add<Switch>(
-    "a", "all", "capture all sensor values (not just the ones that changed in the first second)");
-  auto period_opt = op.add<Value<int> >(
-    "p", "period", "Period of the worker task in milliseconds", 150);
-  auto duty_cycle_opt = op.add<Value<int> >(
-    "d", "duty-cycle", "Duty cycle of the worker task in percent (10-90)",
-    50);
-  auto cycles_opt = op.add<Value<int> >(
-    "c", "cycles", "How many busy/wait cycles to run per core", 13);
-  auto rounds_opt = op.add<Value<int> >(
-    "r", "rounds", "How many times to cycle through all cores", 1);
-  auto outfile_opt = op.add<Value<std::string> >(
-    "o", "output", "Output filename for results", "results/output.csv");
+  auto all_option = op.add<Switch>("a", "all",
+                                   "capture all sensor values (not just the "
+                                   "ones that changed in the first second)");
+  auto period_opt = op.add<Value<int>>(
+      "p", "period", "Period of the worker task in milliseconds", 150);
+  auto duty_cycle_opt = op.add<Value<int>>(
+      "d", "duty-cycle", "Duty cycle of the worker task in percent (10-90)",
+      50);
+  auto cycles_opt = op.add<Value<int>>(
+      "c", "cycles", "How many busy/wait cycles to run per core", 13);
+  auto rounds_opt = op.add<Value<int>>(
+      "r", "rounds", "How many times to cycle through all cores", 1);
+  auto outfile_opt = op.add<Value<std::string>>(
+      "o", "output", "Output filename for results", "results/output.csv");
   // --- REMOVED: GUI option is now default ---
   // auto gui_opt = op.add<Switch>("g", "gui", "Enable live GUI display");
 
@@ -460,7 +461,7 @@ int main(int argc, char **argv) {
     // Read a few times to determine the pm_table entries that are changing,
     // stores result in interesting_index
     std::vector<float> measurements(n_measurements);
-    std::vector<folly::StreamingStats<float, float> > stats(n_measurements);
+    std::vector<folly::StreamingStats<float, float>> stats(n_measurements);
     std::vector<bool> interesting(n_measurements, false);
     const auto sample_period = std::chrono::milliseconds(1);
     auto next_sample_time = Clock::now();
@@ -502,9 +503,9 @@ int main(int argc, char **argv) {
       }
     }
     SPDLOG_INFO(
-      "The pm_table on this platform contains {} entries. {} of these were "
-      "changing when reading {} samples with a period of {} ms.",
-      n_measurements, count_interesting, n_samples, sample_period.count());
+        "The pm_table on this platform contains {} entries. {} of these were "
+        "changing when reading {} samples with a period of {} ms.",
+        n_measurements, count_interesting, n_samples, sample_period.count());
 
     auto first_it = std::find(interesting.begin(), interesting.end(), true);
 
@@ -527,9 +528,9 @@ int main(int argc, char **argv) {
 
     if (missed_samples)
       SPDLOG_WARN("Of the {} samples {} were late ({:.0g}%), e.g. sample {}. "
-                "Your CPU cannnot sample itself with the expected rate.",
-                n_samples, missed_samples, missed_samples * 100.f / n_samples,
-                missed_sample);
+                  "Your CPU cannnot sample itself with the expected rate.",
+                  n_samples, missed_samples, missed_samples * 100.f / n_samples,
+                  missed_sample);
     else
       SPDLOG_INFO("All samples were on time.");
   }
@@ -548,7 +549,7 @@ int main(int argc, char **argv) {
   LockedBuffer locked_buf(total_bytes);
   if (!locked_buf) {
     SPDLOG_ERROR(
-      "Failed to allocate measurement buffer (mmap + malloc both failed).");
+        "Failed to allocate measurement buffer (mmap + malloc both failed).");
     return 1;
   }
   SPDLOG_INFO("Allocated {} bytes for measurement buffer (locked={}).",
@@ -580,7 +581,7 @@ int main(int argc, char **argv) {
   std::ofstream outfile(outfile_opt->value());
   outfile << "round,core_id,timestamp_ns,worker_state";
   // Only write headers for the interesting sensors
-  for (int sensor_idx: interesting_index) {
+  for (int sensor_idx : interesting_index) {
     outfile << ",v" << std::to_string(sensor_idx);
   }
   outfile << std::endl;
@@ -592,12 +593,13 @@ int main(int argc, char **argv) {
 
   // --- Main Experiment Loop ---
   for (int round = 0; round < rounds_opt->value(); ++round) {
-    std::cout << "========== STARTING ROUND " << round + 1 << " OF " <<
-        rounds_opt->value() << " ==========" << std::endl;
+    std::cout << "========== STARTING ROUND " << round + 1 << " OF "
+              << rounds_opt->value() << " ==========" << std::endl;
 
     for (int core_to_test = 1; core_to_test < num_hardware_threads;
          ++core_to_test) {
-      if (core_to_test == measurement_core) continue;
+      if (core_to_test == measurement_core)
+        continue;
 
       std::cout << "Starting test on core " << core_to_test << std::endl;
 
@@ -609,14 +611,14 @@ int main(int argc, char **argv) {
       eye_storage.clear(); // call per run to reset while keeping allocation
 
       // --- Launch Threads for the current core test ---
-      std::thread measurement_thread(measurement_thread_func,
-                                     measurement_core, std::ref(measurement_view), std::ref(actual_sample_count),
-                                     std::ref(pm_table_reader),
-                                     std::ref(capturer));
+      std::thread measurement_thread(
+          measurement_thread_func, measurement_core, std::ref(measurement_view),
+          std::ref(actual_sample_count), std::ref(pm_table_reader),
+          std::ref(capturer));
 
       std::thread worker_thread(worker_thread_func, core_to_test,
-                                period_opt->value(),
-                                duty_cycle_opt->value(), cycles_opt->value(),
+                                period_opt->value(), duty_cycle_opt->value(),
+                                cycles_opt->value(),
                                 std::ref(actual_transition_count));
 
       // Give threads a moment to initialize and set affinity
@@ -637,19 +639,19 @@ int main(int argc, char **argv) {
 
       // --- Analyze and Store Results (between core runs) ---
       analyze_and_print_results(core_to_test, measurement_view,
-                                actual_sample_count, actual_transition_count, eye_storage);
+                                actual_sample_count, actual_transition_count,
+                                eye_storage);
 
       // Write the raw data for this run to the file
       for (size_t i = 0; i < actual_sample_count; ++i) {
         auto const &s = measurement_view[i];
-        outfile << round << ","
-            << core_to_test << ","
-            <<
-            std::chrono::duration_cast<std::chrono::nanoseconds>(s.timestamp.time_since_epoch()).
-            count() << ","
-            << s.worker_state;
+        outfile << round << "," << core_to_test << ","
+                << std::chrono::duration_cast<std::chrono::nanoseconds>(
+                       s.timestamp.time_since_epoch())
+                       .count()
+                << "," << s.worker_state;
         // Only write values for the interesting sensors
-        for (int sensor_idx: interesting_index) {
+        for (int sensor_idx : interesting_index) {
           outfile << "," << s.measurements[sensor_idx];
         }
         outfile << std::endl;
@@ -661,7 +663,8 @@ int main(int argc, char **argv) {
   outfile.close();
   std::cout << "Results saved to " << outfile_opt->value() << std::endl;
 
-  // LockedBuffer destructor will munlock/munmap or free as needed here when it goes out of scope.
+  // LockedBuffer destructor will munlock/munmap or free as needed here when it
+  // goes out of scope.
 
   spdlog::shutdown(); // Flush all logs before exiting
   return 0;

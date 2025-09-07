@@ -47,10 +47,10 @@ GuiRunner::GuiRunner(int rounds, int num_hardware_threads, int measurement_core,
   size_t expected_events = static_cast<int>(cycles * 1.3f);
   auto window_before_ms = 0;
   auto window_after_ms = period;
-  storage_buffer_a_ =
-      std::make_unique<EyeDiagramStorage>(interesting_index, expected_events, window_before_ms, window_after_ms);
-  storage_buffer_b_ =
-      std::make_unique<EyeDiagramStorage>(interesting_index, expected_events, window_before_ms, window_after_ms);
+  storage_buffer_a_ = std::make_unique<EyeDiagramStorage>(
+      interesting_index, expected_events, window_before_ms, window_after_ms);
+  storage_buffer_b_ = std::make_unique<EyeDiagramStorage>(
+      interesting_index, expected_events, window_before_ms, window_after_ms);
   gui_read_buffer_.store(storage_buffer_a_.get());
 }
 
@@ -229,11 +229,12 @@ int GuiRunner::run() {
     if (std::chrono::steady_clock::now() - last_update >
         std::chrono::milliseconds(16)) {
       // --- Get the current read buffer atomically ---
-      static EyeDiagramStorage*old_read_buffer = nullptr;
+      static EyeDiagramStorage *old_read_buffer = nullptr;
       EyeDiagramStorage *current_read_buffer =
           gui_read_buffer_.load(std::memory_order_acquire);
-      if (old_read_buffer && old_read_buffer!=current_read_buffer) {
-        SPDLOG_INFO("Read buffer has changed: {:p}.", reinterpret_cast<void*>(current_read_buffer));
+      if (old_read_buffer && old_read_buffer != current_read_buffer) {
+        SPDLOG_INFO("Read buffer has changed: {:p}.",
+                    reinterpret_cast<void *>(current_read_buffer));
       }
       old_read_buffer = current_read_buffer;
       gui_cache.update(*current_read_buffer);

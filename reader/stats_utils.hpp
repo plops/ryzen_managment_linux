@@ -24,7 +24,7 @@ static inline float calculate_trimmed_mean(const std::vector<float> &data,
   std::vector<float> sorted = data;
   std::ranges::sort(sorted);
   size_t n = sorted.size();
-  if (n==0)
+  if (n == 0)
     return 0.0f;
   size_t trim_count = static_cast<size_t>((trim_percentage / 100.0f) * n);
   if (2 * trim_count >= n) {
