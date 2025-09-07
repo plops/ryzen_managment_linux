@@ -29,6 +29,16 @@ void render_gui(
 #endif
 
   ImGui::Text("Experiment Status: %s", experiment_status.c_str());
+
+  size_t accumulation_count = 0;
+  for (const auto &atomic_ptr : gui_display_pointers) {
+    const DisplayData *plot = atomic_ptr.load(std::memory_order_acquire);
+    if (plot && plot->accumulation_count > 0) {
+      accumulation_count = plot->accumulation_count;
+      break;
+    }
+  }
+  ImGui::Text("Accumulated Traces: %zu", accumulation_count);
   ImGui::Separator();
 
   bool is_manual = manual_mode.load();
@@ -38,11 +48,11 @@ void render_gui(
   ImGui::SameLine();
   ImGui::BeginDisabled(!is_manual);
 
-  int core_to_test = manual_core_to_test.load(); // Load once for the slider
+  int core_to_test = manual_core_to_test.load();
   if (ImGui::SliderInt("Test Core", &core_to_test, 1,
                        num_hardware_threads - 1)) {
     manual_core_to_test.store(core_to_test);
-    command_queue.push(ChangeCoreCmd{core_to_test}); // Send command on change
+    command_queue.push(ChangeCoreCmd{core_to_test});
   }
   ImGui::EndDisabled();
   ImGui::Separator();
@@ -63,24 +73,28 @@ void render_gui(
         if (plot && !plot->x_data.empty()) {
           if (ImPlot::BeginPlot("##EyePlot", ImVec2(-1, 80),
                                 ImPlotFlags_NoTitle | ImPlotFlags_NoLegend)) {
-            ImPlot::SetupAxisLimits(ImAxis_X1, 0, plot->window_after_ms,
-                                    ImGuiCond_Always);
+            // --- FIXED: Use before and after windows for correct axis limits ---
+            ImPlot::SetupAxisLimits(ImAxis_X1, -plot->window_before_ms,
+                                    plot->window_after_ms, ImGuiCond_Always);
             ImPlot::SetupAxis(ImAxis_Y1, nullptr, ImPlotAxisFlags_AutoFit);
 
             ImPlot::PushStyleColor(ImPlotCol_Line,
                                    ImVec4(1, 1, 0, 0.8f)); // Yellow for Mean
             ImPlot::PlotLine("TrimmedMean", plot->x_data.data(),
-                             plot->y_data_mean.data(), plot->x_data.size());
+                             plot->y_data_mean.data(),
+                             static_cast<int>(plot->x_data.size()));
 
             ImPlot::PushStyleColor(ImPlotCol_Line,
                                    ImVec4(1, 0, 0, 0.5f)); // Red for Max
             ImPlot::PlotLine("Max", plot->x_data.data(),
-                             plot->y_data_max.data(), plot->x_data.size());
+                             plot->y_data_max.data(),
+                             static_cast<int>(plot->x_data.size()));
 
             ImPlot::PushStyleColor(ImPlotCol_Line,
                                    ImVec4(0, 1, 1, 0.5f)); // Cyan for Min
             ImPlot::PlotLine("Min", plot->x_data.data(),
-                             plot->y_data_min.data(), plot->x_data.size());
+                             plot->y_data_min.data(),
+                             static_cast<int>(plot->x_data.size()));
             ImPlot::PopStyleColor(3);
 
             ImPlot::EndPlot();

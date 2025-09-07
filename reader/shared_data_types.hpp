@@ -40,9 +40,9 @@ struct DisplayData {
 
   // Metadata
   int original_sensor_index = -1;
-  size_t accumulation_count = 0;
-  int window_before_ms = 50; // Use a non-zero default
-  int window_after_ms = 150; // Use a non-zero default
+  int accumulation_count = 0; // How many traces were used for this data
+  int window_before_ms = 50;  // Use a non-zero default
+  int window_after_ms = 150;  // Use a non-zero default
 
   void clear() {
     x_data.clear();

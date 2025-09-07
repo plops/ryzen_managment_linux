@@ -11,9 +11,11 @@
 #include <chrono>
 #include <deque>
 #include <numeric>
+#include <span>
 #include <thread>
 
 #include "pm_table_reader.hpp"
+#include "stats_utils.hpp"
 
 // allow literals for time units
 using namespace std::chrono_literals;
@@ -42,11 +44,13 @@ GuiRunner::GuiRunner(int num_hardware_threads, int measurement_core, int period,
                      size_t n_measurements,
                      const std::vector<int> &interesting_index)
     : num_hardware_threads_(num_hardware_threads),
-      measurement_core_(measurement_core), period_ms_(period),
-      duty_cycle_percent_(duty_cycle), num_cycles_(cycles),
-      n_measurements_(n_measurements), interesting_index_(interesting_index),
+      measurement_core_(measurement_core),
+      // The worker load period is now distinct from the capture window
+      worker_period_ms_(period), duty_cycle_percent_(duty_cycle),
+      num_cycles_(cycles), n_measurements_(n_measurements),
+      interesting_index_(interesting_index),
       pm_table_reader_(pm_table_reader),
-      spsc_queue_(1024), // SPSC queue size, e.g., for ~1 second of data
+      spsc_queue_(2048), // SPSC queue size, e.g., for ~2 seconds of data
       gui_display_pointers_(interesting_index_.size()) {
   SPDLOG_INFO("GUI mode enabled. Initializing data buffers...");
   const size_t num_interesting = interesting_index_.size();
@@ -66,7 +70,6 @@ GuiRunner::GuiRunner(int num_hardware_threads, int measurement_core, int period,
 GuiRunner::~GuiRunner() {
   terminate_threads_.store(true);
 
-  // Threads will be joined in run() before this destructor is called.
   if (window_) {
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
@@ -82,61 +85,63 @@ void GuiRunner::run_processing_thread() {
   enum class State { IDLE, CAPTURING } state = State::IDLE;
   TimePoint last_rise_time;
   std::vector<RawSample> current_trace;
-  current_trace.reserve(period_ms_ + 50);
+  current_trace.reserve(window_after_ms_ + 50);
+
+  // Buffer to hold recent samples for the pre-trigger window
+  std::deque<RawSample> sample_history;
+  const size_t history_size = window_before_ms_ + 10; // Keep ~50ms + margin
 
   const size_t num_interesting = interesting_index_.size();
-  const int num_bins = period_ms_;
+  const int num_bins = window_before_ms_ + window_after_ms_;
 
-  // Accumulation Buffer: [sensor_idx][bin_idx] -> deque of samples
   std::vector<std::vector<std::deque<float>>> accumulation_buffer(
       num_interesting, std::vector<std::deque<float>>(num_bins));
 
-  // Map original sensor index to its compact interesting_index
   std::unordered_map<int, size_t> sensor_to_storage_idx;
   for (size_t i = 0; i < interesting_index_.size(); ++i) {
     sensor_to_storage_idx[interesting_index_[i]] = i;
   }
 
-  // Determine which buffer is the current write target
-  const auto *write_buffer_ptr = &display_data_b_;
+  auto *write_buffer_ptr = &display_data_b_;
+  int last_worker_state = 0;
 
   while (!terminate_threads_.load()) {
-    // 1. Process GUI commands
     if (GuiCommand cmd; command_queue_.try_pop(cmd)) {
       std::visit(
           [&](auto &&arg) {
             using T = std::decay_t<decltype(arg)>;
             if constexpr (std::is_same_v<T, ChangeCoreCmd>) {
-              SPDLOG_INFO("Processing command: Change core to {}",
-                          arg.new_core_id);
-              // Clear all data buffers to start fresh
+              SPDLOG_INFO("Processing command: Change core to {}", arg.new_core_id);
               for (auto &sensor_bins : accumulation_buffer) {
-                for (auto &bin : sensor_bins)
-                  bin.clear();
+                for (auto &bin : sensor_bins) bin.clear();
               }
               current_trace.clear();
+              sample_history.clear();
               state = State::IDLE;
             } else if constexpr (std::is_same_v<T, ChangeAccumulationsCmd>) {
               max_accumulations_.store(arg.new_count);
-              SPDLOG_INFO("Processing command: Change accumulations to {}",
-                          arg.new_count);
+              SPDLOG_INFO("Processing command: Change accumulations to {}", arg.new_count);
             }
           },
           cmd);
     }
 
-    // 2. Consume raw samples from the SPSC queue
     RawSample sample;
     bool work_done = false;
     while (spsc_queue_.read(sample)) {
       work_done = true;
 
-      if (bool last_state_is_idle = (state == State::IDLE);
-          sample.worker_state == 1 && last_state_is_idle) {
+      sample_history.push_back(sample);
+      if (sample_history.size() > history_size) {
+        sample_history.pop_front();
+      }
+
+      if (sample.worker_state == 1 && last_worker_state == 0) {
         state = State::CAPTURING;
         last_rise_time = sample.timestamp;
         current_trace.clear();
       }
+      last_worker_state = sample.worker_state;
 
       if (state == State::CAPTURING) {
         auto time_since_rise =
@@ -144,32 +149,34 @@ void GuiRunner::run_processing_thread() {
                 sample.timestamp - last_rise_time);
 
         if (long long time_delta_ms = time_since_rise.count();
-            time_delta_ms >= 0 && time_delta_ms < period_ms_) {
+            time_delta_ms >= 0 && time_delta_ms < window_after_ms_) {
           current_trace.push_back(sample);
-        } else {
+        } else if (time_delta_ms >= window_after_ms_) {
           state = State::IDLE;
 
-          // --- KEY PROCESSING STEP ---
-          // a) Regrid/Interpolate `current_trace` and add to
-          // accumulation_buffer
-          for (const auto &s : current_trace) {
-            const long long bin_idx =
-                std::chrono::duration_cast<std::chrono::milliseconds>(
-                    s.timestamp - last_rise_time)
-                    .count();
-            if (bin_idx >= 0 && bin_idx < num_bins) {
-              for (size_t i = 0; i < s.num_measurements; ++i) {
-                if (const auto it = sensor_to_storage_idx.find(i);
-                    it != sensor_to_storage_idx.end()) {
-                  size_t storage_idx = it->second;
-                  accumulation_buffer[storage_idx][bin_idx].push_back(
-                      s.measurements[i]);
+          auto process_sample_collection = [&](const auto &collection) {
+            for (const auto &s : collection) {
+              const long long time_delta =
+                  std::chrono::duration_cast<std::chrono::milliseconds>(
+                      s.timestamp - last_rise_time)
+                      .count();
+              const long long bin_idx = time_delta + window_before_ms_;
+
+              if (bin_idx >= 0 && bin_idx < num_bins) {
+                for (size_t sens_idx = 0; sens_idx < s.num_measurements; ++sens_idx) {
+                  if (auto it = sensor_to_storage_idx.find(sens_idx);
+                      it != sensor_to_storage_idx.end()) {
+                    accumulation_buffer[it->second][bin_idx].push_back(
+                        s.measurements[sens_idx]);
+                  }
                 }
               }
             }
-          }
+          };
 
-          // b) Trim accumulation buffer to max size
+          process_sample_collection(sample_history);
+          process_sample_collection(current_trace);
+
           int max_acc = max_accumulations_.load();
           for (auto &sensor_bins : accumulation_buffer) {
             for (auto &bin_deque : sensor_bins) {
@@ -179,40 +186,38 @@ void GuiRunner::run_processing_thread() {
             }
           }
 
-          // c) Recalculate stats and populate the write buffer
           for (size_t i = 0; i < num_interesting; ++i) {
             auto &target_display = *(*write_buffer_ptr)[i];
             target_display.clear();
-            target_display.window_after_ms = period_ms_;
+            target_display.window_before_ms = window_before_ms_;
+            target_display.window_after_ms = window_after_ms_;
+            target_display.accumulation_count =
+                !accumulation_buffer[i].empty()
+                    ? accumulation_buffer[i][window_before_ms_].size()
+                    : 0;
 
             for (int bin_idx = 0; bin_idx < num_bins; ++bin_idx) {
               if (const auto &bin_deque = accumulation_buffer[i][bin_idx];
                   !bin_deque.empty()) {
-                // Convert deque to vector for stats function
-                // FIXME: Allocation occurs every 300ms, modifying
-                // calculate_trimmed_mean to accept iterators or a std::span
-                // would be better
-                std::vector<float> bin_vec(bin_deque.begin(), bin_deque.end());
+                target_display.x_data.push_back(
+                    static_cast<float>(bin_idx - window_before_ms_));
 
-                target_display.x_data.push_back(static_cast<float>(bin_idx));
+                std::vector<float> temp_vec(bin_deque.begin(), bin_deque.end());
                 target_display.y_data_mean.push_back(
-                    calculate_trimmed_mean(bin_vec, 10.0f));
+                    calculate_trimmed_mean(temp_vec, 10.0f));
                 target_display.y_data_min.push_back(
-                    *std::ranges::min_element(bin_vec));
+                    *std::ranges::min_element(bin_deque));
                 target_display.y_data_max.push_back(
-                    *std::ranges::max_element(bin_vec));
-                target_display.accumulation_count = bin_vec.size();
+                    *std::ranges::max_element(bin_deque));
               }
             }
           }
 
-          // d) Atomically swap pointers
           for (size_t i = 0; i < num_interesting; ++i) {
             gui_display_pointers_[i].store((*write_buffer_ptr)[i].get(),
                                            std::memory_order_release);
           }
 
-          // e) Flip the write buffer target for the next run
           write_buffer_ptr = (write_buffer_ptr == &display_data_a_)
                                  ? &display_data_b_
                                  : &display_data_a_;
@@ -226,26 +231,21 @@ void GuiRunner::run_processing_thread() {
   }
 }
 
-// Member function to manage the worker thread's lifecycle
 void GuiRunner::run_worker_thread() const {
   while (!terminate_threads_.load()) {
     if (manual_mode_.load()) {
       if (int core_to_test = manual_core_to_test_.load();
           core_to_test != measurement_core_) {
-        worker_thread_func(core_to_test, period_ms_, duty_cycle_percent_,
-                           num_cycles_);
+        worker_thread_func(core_to_test, worker_period_ms_,
+                           duty_cycle_percent_, num_cycles_);
       }
     }
-    // In automatic mode, this thread would loop through cores.
-    // For simplicity, we only implement manual mode continuous runs.
     std::this_thread::sleep_for(50ms);
   }
 }
 
 int GuiRunner::run() {
-  if (!glfwInit()) { /* ... error handling ... */
-    return -1;
-  }
+  if (!glfwInit()) { return -1; }
   glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
   glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
   glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
@@ -265,8 +265,7 @@ int GuiRunner::run() {
   ImGui_ImplOpenGL3_Init("#version 330");
   ImGui::StyleColorsDark();
 
-  // --- Launch all background threads ---
-  g_run_measurement.store(true); // Measurement runs continuously
+  g_run_measurement.store(true);
   std::thread measurement(measurement_thread_func, measurement_core_,
                           std::ref(spsc_queue_), std::ref(pm_table_reader_));
   std::thread processing(&GuiRunner::run_processing_thread, this);
@@ -296,17 +295,12 @@ int GuiRunner::run() {
     glfwSwapBuffers(window_);
   }
 
-  // --- Cleanup ---
   terminate_threads_.store(true);
   g_run_measurement.store(false);
 
-  // Join all threads
-  if (measurement.joinable())
-    measurement.join();
-  if (processing.joinable())
-    processing.join();
-  if (worker.joinable())
-    worker.join();
+  if (measurement.joinable()) measurement.join();
+  if (processing.joinable()) processing.join();
+  if (worker.joinable()) worker.join();
 
   SPDLOG_INFO("GUI mode finished.");
   return 0;

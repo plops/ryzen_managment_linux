@@ -34,7 +34,7 @@ static void wait_until(const Clock::time_point &deadline) {
   if (deadline <= now)
     return;
 
-  const auto spin_threshold = 200ms;
+  const auto spin_threshold = 200us; // Should be very small
   if (const auto remaining = deadline - now; remaining > spin_threshold) {
     const auto wake_time = deadline - spin_threshold;
     const auto ns =
@@ -104,6 +104,10 @@ void measurement_thread_func(int core_id,
  * It pins itself to the specified core and executes a fixed number of busy/wait
  * cycles, signaling its state via the global atomic g_worker_state.
  */
+
+// NOTE: Ensure worker_thread_func always sets g_worker_state to 0 when it
+// finishes to avoid a stale "busy" state.
+
 void worker_thread_func(int core_id, int period_ms, int duty_cycle_percent,
                         int num_cycles) {
   if (!set_thread_affinity(core_id)) {
@@ -115,21 +119,18 @@ void worker_thread_func(int core_id, int period_ms, int duty_cycle_percent,
   const auto wait_duration = period - busy_duration;
 
   for (int i = 0; i < num_cycles; ++i) {
-    // --- BUSY PHASE ---
     g_worker_state.store(1, std::memory_order_relaxed);
     auto busy_start = Clock::now();
     while ((Clock::now() - busy_start) < busy_duration) {
-      integer_alu_workload(1000); // Keep CPU busy
+      integer_alu_workload(1000);
     }
 
-    // --- WAITING PHASE ---
     g_worker_state.store(0, std::memory_order_relaxed);
     std::this_thread::sleep_for(wait_duration);
   }
-  // Ensure state is idle when the burst of work is complete
+  // Ensure state is idle when the burst is done
   g_worker_state.store(0, std::memory_order_relaxed);
 }
-
 // --- Main Program Logic ---
 
 int main(int argc, char **argv) {
