@@ -7,56 +7,66 @@
 #include <GLFW/glfw3.h>
 #include <spdlog/spdlog.h>
 
-#include <atomic>
+#include <algorithm>
 #include <chrono>
+#include <deque>
+#include <numeric>
 #include <thread>
 
-#include "eye_capturer.hpp"
-#include "eye_diagram.hpp"
-#include "gui_components.hpp"
-#include "measurement_types.hpp"
 #include "pm_table_reader.hpp"
-#include "popl.hpp"
 
-// Forward declarations for thread functions from measure.cpp
+// allow literals for time units
+using namespace std::chrono_literals;
+
+// Forward declarations from measure.cpp
 void measurement_thread_func(int core_id,
-                             std::vector<LocalMeasurement> &storage,
-                             size_t &sample_count,
-                             PmTableReader &pm_table_reader,
-                             EyeCapturer &capturer);
-
+                             folly::ProducerConsumerQueue<RawSample> &queue,
+                             PmTableReader &pm_table_reader);
 void worker_thread_func(int core_id, int period_ms, int duty_cycle_percent,
-                        int num_cycles, size_t &transition_count);
+                        int num_cycles);
+
+// Forward declaration from gui_render.cpp
+void render_gui(
+    const std::vector<std::atomic<DisplayData *>> &gui_display_pointers,
+    int n_total_sensors, const std::vector<int> &interesting_indices,
+    const std::string &experiment_status, CommandQueue &command_queue,
+    std::atomic<bool> &manual_mode, std::atomic<int> &manual_core_to_test,
+    int num_hardware_threads);
 
 // Extern global flags from measure.cpp
 extern std::atomic<bool> g_run_measurement;
-extern std::atomic<bool> g_run_worker;
+extern std::atomic<int> g_worker_state;
 
-GuiRunner::GuiRunner(int rounds, int num_hardware_threads, int measurement_core,
-                     int period, int duty_cycle, int cycles,
-                     std::vector<LocalMeasurement> &measurement_view,
-                     PmTableReader &pm_table_reader, size_t n_measurements,
+GuiRunner::GuiRunner(int num_hardware_threads, int measurement_core, int period,
+                     int duty_cycle, int cycles, PmTableReader &pm_table_reader,
+                     size_t n_measurements,
                      const std::vector<int> &interesting_index)
-    : rounds_(rounds), num_hardware_threads_(num_hardware_threads),
-      measurement_core_(measurement_core), period_(period),
-      duty_cycle_(duty_cycle), cycles_(cycles),
-      measurement_view_(measurement_view), pm_table_reader_(pm_table_reader),
-      n_measurements_(n_measurements), interesting_index_(interesting_index) {
-  SPDLOG_INFO("GUI mode enabled. Initializing window and double-buffer...");
-  // --- Initialize double-buffer for eye diagrams ---
-  size_t expected_events = static_cast<int>(cycles * 1.3f);
-  auto window_before_ms = 0;
-  auto window_after_ms = period;
-  storage_buffer_a_ = std::make_unique<EyeDiagramStorage>(
-      interesting_index, expected_events, window_before_ms, window_after_ms);
-  storage_buffer_b_ = std::make_unique<EyeDiagramStorage>(
-      interesting_index, expected_events, window_before_ms, window_after_ms);
-  gui_read_buffer_.store(storage_buffer_a_.get());
+    : num_hardware_threads_(num_hardware_threads),
+      measurement_core_(measurement_core), period_ms_(period),
+      duty_cycle_percent_(duty_cycle), num_cycles_(cycles),
+      n_measurements_(n_measurements), interesting_index_(interesting_index),
+      pm_table_reader_(pm_table_reader),
+      spsc_queue_(1024), // SPSC queue size, e.g., for ~1 second of data
+      gui_display_pointers_(interesting_index_.size()) {
+  SPDLOG_INFO("GUI mode enabled. Initializing data buffers...");
+  const size_t num_interesting = interesting_index_.size();
+
+  for (size_t i = 0; i < num_interesting; ++i) {
+    display_data_a_.push_back(std::make_unique<DisplayData>());
+    display_data_b_.push_back(std::make_unique<DisplayData>());
+
+    display_data_a_[i]->original_sensor_index = interesting_index_[i];
+    display_data_b_[i]->original_sensor_index = interesting_index_[i];
+
+    // Initially, point the GUI to buffer A
+    gui_display_pointers_[i].store(display_data_a_[i].get());
+  }
 }
 
 GuiRunner::~GuiRunner() {
-  terminate_thread_.store(true); // Signal experiment thread to stop
+  terminate_threads_.store(true);
 
+  // Threads will be joined in run() before this destructor is called.
   if (window_) {
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
@@ -68,136 +78,179 @@ GuiRunner::~GuiRunner() {
   }
 }
 
-void GuiRunner::run_experiment_thread() {
-  std::atomic<bool> experiment_done = false;
-  std::atomic<int> current_round = 0;
-  std::atomic<int> current_core_testing = 0;
+void GuiRunner::run_processing_thread() {
+  enum class State { IDLE, CAPTURING } state = State::IDLE;
+  TimePoint last_rise_time;
+  std::vector<RawSample> current_trace;
+  current_trace.reserve(period_ms_ + 50);
 
-  // The experiment thread will write to the buffer not currently being read by
-  // the GUI.
-  EyeDiagramStorage *write_buffer = storage_buffer_b_.get();
-  EyeCapturer capturer(*write_buffer);
+  const size_t num_interesting = interesting_index_.size();
+  const int num_bins = period_ms_;
 
-  while (!terminate_thread_.load()) {
-    bool is_manual = manual_mode_.load();
+  // Accumulation Buffer: [sensor_idx][bin_idx] -> deque of samples
+  std::vector<std::vector<std::deque<float>>> accumulation_buffer(
+      num_interesting, std::vector<std::deque<float>>(num_bins));
 
-    if (is_manual) {
-      // --- MANUAL MODE ---
-      int core_to_test = manual_core_to_test_.load();
-      if (core_to_test == measurement_core_) {
-        // If user somehow selects the measurement core, pick a valid one.
-        core_to_test = (measurement_core_ + 1) % num_hardware_threads_;
-        if (core_to_test == 0)
-          core_to_test = 1; // Ensure it's not 0
-        manual_core_to_test_.store(core_to_test);
+  // Map original sensor index to its compact interesting_index
+  std::unordered_map<int, size_t> sensor_to_storage_idx;
+  for (size_t i = 0; i < interesting_index_.size(); ++i) {
+    sensor_to_storage_idx[interesting_index_[i]] = i;
+  }
+
+  // Determine which buffer is the current write target
+  const auto *write_buffer_ptr = &display_data_b_;
+
+  while (!terminate_threads_.load()) {
+    // 1. Process GUI commands
+    if (GuiCommand cmd; command_queue_.try_pop(cmd)) {
+      std::visit(
+          [&](auto &&arg) {
+            using T = std::decay_t<decltype(arg)>;
+            if constexpr (std::is_same_v<T, ChangeCoreCmd>) {
+              SPDLOG_INFO("Processing command: Change core to {}",
+                          arg.new_core_id);
+              // Clear all data buffers to start fresh
+              for (auto &sensor_bins : accumulation_buffer) {
+                for (auto &bin : sensor_bins)
+                  bin.clear();
+              }
+              current_trace.clear();
+              state = State::IDLE;
+            } else if constexpr (std::is_same_v<T, ChangeAccumulationsCmd>) {
+              max_accumulations_.store(arg.new_count);
+              SPDLOG_INFO("Processing command: Change accumulations to {}",
+                          arg.new_count);
+            }
+          },
+          cmd);
+    }
+
+    // 2. Consume raw samples from the SPSC queue
+    RawSample sample;
+    bool work_done = false;
+    while (spsc_queue_.read(sample)) {
+      work_done = true;
+
+      if (bool last_state_is_idle = (state == State::IDLE);
+          sample.worker_state == 1 && last_state_is_idle) {
+        state = State::CAPTURING;
+        last_rise_time = sample.timestamp;
+        current_trace.clear();
       }
-      current_core_testing = core_to_test;
-      experiment_done = false; // Manual mode is never "done"
 
-      g_run_measurement = false;
-      g_run_worker = false;
-      size_t actual_sample_count = 0;
-      size_t actual_transition_count = 0;
-      write_buffer->clear();
+      if (state == State::CAPTURING) {
+        auto time_since_rise =
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                sample.timestamp - last_rise_time);
 
-      std::thread measurement_thread(
-          measurement_thread_func, measurement_core_,
-          std::ref(measurement_view_), std::ref(actual_sample_count),
-          std::ref(pm_table_reader_), std::ref(capturer));
+        if (long long time_delta_ms = time_since_rise.count();
+            time_delta_ms >= 0 && time_delta_ms < period_ms_) {
+          current_trace.push_back(sample);
+        } else {
+          state = State::IDLE;
 
-      std::thread worker_thread(worker_thread_func, core_to_test, period_,
-                                duty_cycle_, cycles_,
-                                std::ref(actual_transition_count));
+          // --- KEY PROCESSING STEP ---
+          // a) Regrid/Interpolate `current_trace` and add to
+          // accumulation_buffer
+          for (const auto &s : current_trace) {
+            const long long bin_idx =
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    s.timestamp - last_rise_time)
+                    .count();
+            if (bin_idx >= 0 && bin_idx < num_bins) {
+              for (size_t i = 0; i < s.num_measurements; ++i) {
+                if (const auto it = sensor_to_storage_idx.find(i);
+                    it != sensor_to_storage_idx.end()) {
+                  size_t storage_idx = it->second;
+                  accumulation_buffer[storage_idx][bin_idx].push_back(
+                      s.measurements[i]);
+                }
+              }
+            }
+          }
 
-      std::this_thread::sleep_for(std::chrono::milliseconds(50));
-      g_run_measurement.store(true, std::memory_order_release);
-      g_run_worker.store(true, std::memory_order_release);
+          // b) Trim accumulation buffer to max size
+          int max_acc = max_accumulations_.load();
+          for (auto &sensor_bins : accumulation_buffer) {
+            for (auto &bin_deque : sensor_bins) {
+              while (static_cast<int>(bin_deque.size()) > max_acc) {
+                bin_deque.pop_front();
+              }
+            }
+          }
 
-      worker_thread.join();
-      g_run_measurement.store(false, std::memory_order_release);
-      measurement_thread.join();
+          // c) Recalculate stats and populate the write buffer
+          for (size_t i = 0; i < num_interesting; ++i) {
+            auto &target_display = *(*write_buffer_ptr)[i];
+            target_display.clear();
+            target_display.window_after_ms = period_ms_;
 
-      gui_read_buffer_.store(write_buffer, std::memory_order_release);
-      // write_buffer = (write_buffer == storage_buffer_a_.get())
-      //                    ? storage_buffer_b_.get()
-      //                    : storage_buffer_a_.get();
-      // SPDLOG_INFO("Manual mode switch capturing into buffer {} at {:p}",
-      //             (write_buffer == storage_buffer_a_.get()) ? 'A' : 'B',
-      //             static_cast<void*>(write_buffer));
-      capturer.set_storage(*write_buffer);
+            for (int bin_idx = 0; bin_idx < num_bins; ++bin_idx) {
+              if (const auto &bin_deque = accumulation_buffer[i][bin_idx];
+                  !bin_deque.empty()) {
+                // Convert deque to vector for stats function
+                // FIXME: Allocation occurs every 300ms, modifying
+                // calculate_trimmed_mean to accept iterators or a std::span
+                // would be better
+                std::vector<float> bin_vec(bin_deque.begin(), bin_deque.end());
 
-      // In manual mode, briefly pause to prevent pegging the CPU if cycles are
-      // very short
-      std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    } else {
-      // --- AUTOMATIC MODE ---
-      experiment_done = false;
-      for (int round = 0;
-           round < rounds_ && !manual_mode_.load() && !terminate_thread_.load();
-           ++round) {
-        current_round = round + 1;
-        for (int core_to_test = 1;
-             core_to_test < num_hardware_threads_ && !manual_mode_.load() &&
-             !terminate_thread_.load();
-             ++core_to_test) {
-          if (core_to_test == measurement_core_)
-            continue;
-          current_core_testing = core_to_test;
+                target_display.x_data.push_back(static_cast<float>(bin_idx));
+                target_display.y_data_mean.push_back(
+                    calculate_trimmed_mean(bin_vec, 10.0f));
+                target_display.y_data_min.push_back(
+                    *std::ranges::min_element(bin_vec));
+                target_display.y_data_max.push_back(
+                    *std::ranges::max_element(bin_vec));
+                target_display.accumulation_count = bin_vec.size();
+              }
+            }
+          }
 
-          g_run_measurement = false;
-          g_run_worker = false;
-          size_t actual_sample_count = 0;
-          size_t actual_transition_count = 0;
-          write_buffer->clear();
+          // d) Atomically swap pointers
+          for (size_t i = 0; i < num_interesting; ++i) {
+            gui_display_pointers_[i].store((*write_buffer_ptr)[i].get(),
+                                           std::memory_order_release);
+          }
 
-          std::thread measurement_thread(
-              measurement_thread_func, measurement_core_,
-              std::ref(measurement_view_), std::ref(actual_sample_count),
-              std::ref(pm_table_reader_), std::ref(capturer));
-
-          std::thread worker_thread(worker_thread_func, core_to_test, period_,
-                                    duty_cycle_, cycles_,
-                                    std::ref(actual_transition_count));
-
-          std::this_thread::sleep_for(std::chrono::milliseconds(50));
-          g_run_measurement.store(true, std::memory_order_release);
-          g_run_worker.store(true, std::memory_order_release);
-
-          worker_thread.join();
-          g_run_measurement.store(false, std::memory_order_release);
-          measurement_thread.join();
-
-          gui_read_buffer_.store(write_buffer, std::memory_order_release);
-          write_buffer = (write_buffer == storage_buffer_a_.get())
-                             ? storage_buffer_b_.get()
-                             : storage_buffer_a_.get();
-          SPDLOG_INFO("Automatic mode switch capturing into buffer {}",
-                      (write_buffer == storage_buffer_a_.get()) ? 'A' : 'B');
-          capturer.set_storage(*write_buffer);
+          // e) Flip the write buffer target for the next run
+          write_buffer_ptr = (write_buffer_ptr == &display_data_a_)
+                                 ? &display_data_b_
+                                 : &display_data_a_;
         }
       }
-      experiment_done = true;
+    }
 
-      // Wait until mode is switched or thread is terminated
-      while (!manual_mode_.load() && !terminate_thread_.load()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-      }
+    if (!work_done) {
+      std::this_thread::sleep_for(5ms);
     }
   }
-  SPDLOG_INFO("Experiment thread terminated.");
+}
+
+// Member function to manage the worker thread's lifecycle
+void GuiRunner::run_worker_thread() const {
+  while (!terminate_threads_.load()) {
+    if (manual_mode_.load()) {
+      if (int core_to_test = manual_core_to_test_.load();
+          core_to_test != measurement_core_) {
+        worker_thread_func(core_to_test, period_ms_, duty_cycle_percent_,
+                           num_cycles_);
+      }
+    }
+    // In automatic mode, this thread would loop through cores.
+    // For simplicity, we only implement manual mode continuous runs.
+    std::this_thread::sleep_for(50ms);
+  }
 }
 
 int GuiRunner::run() {
-  if (!glfwInit()) {
-    SPDLOG_ERROR("Failed to initialize GLFW");
+  if (!glfwInit()) { /* ... error handling ... */
     return -1;
   }
-
   glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
   glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
   glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-  window_ = glfwCreateWindow(1280, 720, "Measure Tool - Live Eye Diagrams",
-                             nullptr, nullptr);
+  window_ = glfwCreateWindow(1600, 900, "PM Measure Tool", nullptr, nullptr);
+
   if (window_ == nullptr) {
     SPDLOG_ERROR("Failed to create GLFW window");
     glfwTerminate();
@@ -212,12 +265,12 @@ int GuiRunner::run() {
   ImGui_ImplOpenGL3_Init("#version 330");
   ImGui::StyleColorsDark();
 
-  GuiDataCache gui_cache;
-  std::atomic<bool> experiment_done = false;
-
-  // The experiment thread now manages its own state variables.
-  // We pass our new atomics into the render function.
-  std::thread experiment_thread(&GuiRunner::run_experiment_thread, this);
+  // --- Launch all background threads ---
+  g_run_measurement.store(true); // Measurement runs continuously
+  std::thread measurement(measurement_thread_func, measurement_core_,
+                          std::ref(spsc_queue_), std::ref(pm_table_reader_));
+  std::thread processing(&GuiRunner::run_processing_thread, this);
+  std::thread worker(&GuiRunner::run_worker_thread, this);
 
   while (!glfwWindowShouldClose(window_)) {
     glfwPollEvents();
@@ -225,39 +278,12 @@ int GuiRunner::run() {
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 
-    static auto last_update = std::chrono::steady_clock::now();
-    if (std::chrono::steady_clock::now() - last_update >
-        std::chrono::milliseconds(16)) {
-      // --- Get the current read buffer atomically ---
-      static EyeDiagramStorage *old_read_buffer = nullptr;
-      EyeDiagramStorage *current_read_buffer =
-          gui_read_buffer_.load(std::memory_order_acquire);
-      if (old_read_buffer && old_read_buffer != current_read_buffer) {
-        SPDLOG_INFO("Read buffer has changed: {:p}.",
-                    reinterpret_cast<void *>(current_read_buffer));
-      }
-      old_read_buffer = current_read_buffer;
-      gui_cache.update(*current_read_buffer);
-      last_update = std::chrono::steady_clock::now();
-    }
+    std::string status = "Manual mode: testing core " +
+                         std::to_string(manual_core_to_test_.load());
 
-    std::string status;
-    if (manual_mode_.load()) {
-      status = "Manual mode: testing core " +
-               std::to_string(manual_core_to_test_.load());
-    } else {
-      if (experiment_done) {
-        // This needs to be communicated from the thread
-        status = "Automatic scan complete. Switch to manual mode to continue.";
-      } else {
-        // This part is tricky as the thread owns these now.
-        // For simplicity, we'll just show a generic message.
-        status = "Running automatic scan...";
-      }
-    }
-
-    render_gui(gui_cache, n_measurements_, interesting_index_, status,
-               manual_mode_, manual_core_to_test_, num_hardware_threads_);
+    render_gui(gui_display_pointers_, n_measurements_, interesting_index_,
+               status, command_queue_, manual_mode_, manual_core_to_test_,
+               num_hardware_threads_);
 
     ImGui::Render();
     int display_w, display_h;
@@ -270,10 +296,17 @@ int GuiRunner::run() {
     glfwSwapBuffers(window_);
   }
 
-  terminate_thread_.store(true);
-  if (experiment_thread.joinable()) {
-    experiment_thread.join();
-  }
+  // --- Cleanup ---
+  terminate_threads_.store(true);
+  g_run_measurement.store(false);
+
+  // Join all threads
+  if (measurement.joinable())
+    measurement.join();
+  if (processing.joinable())
+    processing.join();
+  if (worker.joinable())
+    worker.join();
 
   SPDLOG_INFO("GUI mode finished.");
   return 0;

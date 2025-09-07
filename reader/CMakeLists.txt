@@ -32,12 +32,10 @@ target_link_libraries(pm_reader PRIVATE Threads::Threads)
 add_executable(pm_measure
         measure.cpp
         pm_table_reader.cpp
-        eye_diagram.cpp
-        eye_capturer.cpp
         realtime_guard.cpp
         locked_buffer.cpp
-        gui_components.cpp
         gui_runner.cpp
+        gui_render.cpp
 )
 
 target_link_libraries(pm_measure
