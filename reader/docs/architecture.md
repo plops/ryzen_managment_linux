@@ -1,79 +1,105 @@
-# pm_measure Architecture
+# pm_measure Architecture (v2 - Decoupled Pipeline)
 
 `pm_measure` is a tool designed to measure and analyze the impact of CPU core activity on power management (PM) sensor values on AMD Ryzen systems. It operates by creating a controlled workload on one core while a high-frequency measurement thread on another core samples sensor data from the `ryzen_smu` driver's `pm_table`.
 
 The primary goal is to generate "eye diagrams" that show how sensor values change in response to the worker thread transitioning between busy and idle states. The application runs in an interactive GUI mode for real-time visualization and control.
 
+## High-Level Design: A Three-Tier Streaming Pipeline
+
+The new architecture is a **three-tier, multi-threaded pipeline** designed for low latency, high throughput, and clear separation of concerns. This design ensures that high-priority data acquisition is never blocked by data processing or UI rendering, and the GUI remains responsive at 60Hz.
+
+The three main tiers are:
+1.  **Measurement:** A real-time thread dedicated solely to acquiring sensor data.
+2.  **Processing:** A background thread that consumes raw data, performs all calculations (triggering, binning, statistics), and prepares data for visualization.
+3.  **Visualization:** The main GUI thread, which acts as a "dumb" renderer of the pre-processed data.
+
+Communication between threads is handled by high-performance, lock-free (or low-contention) data structures.
+
+```
++------------------+     SPSC Queue     +-------------------+   Double Buffer    +------------------+
+| Measurement      | -----------------> | Processing        | ----------------> | GUI/Visualization|
+| (Real-time Core) | (RawSample Stream) | (Background Core) | (DisplayData Ptr) | (Main Thread)    |
++------------------+                    +-------------------+ <---------------- +------------------+
+                                                 ^             Command Queue
+                                                 |            (User Actions)
+                                                 +------------------------------+
+```
+
 ## Entry Point and Orchestration
 
-The application entry point is in `measure.cpp`. Its primary responsibilities are:
-1.  Parsing command-line arguments using `popl` for experiment parameters (e.g., period, duty cycle).
-2.  Validating system configuration (e.g., checking for `ryzen_smu` driver and identifying which sensor values change).
-3.  Pre-allocating a large, memory-locked buffer for raw sensor readings.
-4.  Instantiating and launching the `GuiRunner`, which takes over the main thread to manage the application.
+The application entry point remains in `measure.cpp`, which handles command-line parsing (`popl`), initial sensor discovery, and launching the central orchestrator, the `GuiRunner` class.
 
-The application is now GUI-only. The `GuiRunner` class is the central orchestrator. It performs two main functions on two different threads:
-
-1.  **GUI Thread (Main Thread)**: Manages the GUI window, handles user input, and runs the render loop using GLFW and ImGui.
-2.  **Experiment Thread**: A background thread spawned by `GuiRunner`. It runs the measurement experiments, either automatically scanning through cores or running on a single core specified by the user in manual mode.
-
-This separation ensures that the GUI remains responsive even while high-priority, real-time measurement tasks are running.
+The `GuiRunner` takes over the main thread and is responsible for:
+1.  Initializing and managing the main GUI window (GLFW, ImGui, ImPlot).
+2.  Setting up the inter-thread communication channels (`folly::ProducerConsumerQueue`, `CommandQueue`, and the double-buffered `DisplayData` pointers).
+3.  Spawning and managing the lifecycle of the three background threads: **Measurement**, **Processing**, and **Worker**.
+4.  Running the main GUI render loop.
 
 ## Core Threads
 
-The application's core logic is built around three specialized threads:
+The application's logic is now cleanly partitioned across four distinct threads.
 
-1.  **GUI Thread**:
-    *   The application's main thread, managed by `GuiRunner`.
-    *   Renders the user interface, including plots and control widgets (e.g., manual mode checkbox, core selection slider).
-    *   Periodically, it reads processed data from a `GuiDataCache` to update the plots.
-    *   Communicates with the experiment thread via atomic flags to switch between automatic and manual modes.
+1.  **GUI/Visualization Thread (Main Thread)**:
+    *   Managed by `GuiRunner`.
+    *   Runs the 60Hz render loop.
+    *   Renders the UI, including plots and control widgets (e.g., core selection slider).
+    *   For each frame, it performs a lock-free read of an **atomic pointer** to get the latest `DisplayData` prepared by the Processing thread. It performs **no calculations**; it only draws the data it is given.
+    *   When the user interacts with a control (e.g., changes the test core), it pushes a command object onto a thread-safe `CommandQueue` to be handled by the Processing thread.
 
-2.  **Experiment Thread** (`GuiRunner::run_experiment_thread`):
-    *   Manages the overall experiment flow.
-    *   In **Automatic Mode**, it iterates through specified CPU cores and rounds, clearing data for each new run.
-    *   In **Manual Mode**, it continuously runs the experiment on a single CPU core selected by the user via the GUI.
-    *   For each test run, it spawns and manages the lifecycle of the worker and measurement threads.
-    *   It manages a double-buffer of `EyeDiagramStorage` objects to communicate data to the GUI thread without locks. After a run is complete, it atomically swaps a pointer to make the newly filled buffer available for reading by the GUI.
+2.  **Measurement Thread** (`measurement_thread_func`):
+    *   Pinned to a dedicated, isolated CPU core (e.g., core 0) with `SCHED_FIFO` real-time priority, managed by `RealtimeGuard`.
+    *   Its sole responsibility is to sample the `pm_table` at a precise 1kHz interval.
+    *   The timing loop uses a hybrid `clock_nanosleep` and spin-wait for accuracy.
+    *   On each tick, it reads the sensor data into a `RawSample` struct and pushes it into a **`folly::ProducerConsumerQueue`**, a high-performance, single-producer, single-consumer lock-free queue.
+    *   This thread is kept extremely lean to guarantee its timing and prevent data loss.
 
-3.  **Worker Thread** (`worker_thread_func`):
-    *   Pinned to a specific CPU core under test.
-    *   Executes a simple busy/wait cycle with a configurable period and duty cycle to create a predictable load.
-    *   Communicates its state (0 for idle, 1 for busy) to the measurement thread via a global atomic flag (`g_worker_state`).
+3.  **Processing Thread** (`GuiRunner::run_processing_thread`):
+    *   The new computational core of the application.
+    *   Runs in a continuous loop on a background core.
+    *   **Consumes** `RawSample` data from the SPSC queue.
+    *   Maintains a short history of recent samples (`std::deque<RawSample>`) to provide data for the pre-trigger part of the eye diagram (`window_before_ms`).
+    *   Implements the state machine logic (previously in `EyeCapturer`) to detect rising edges (idle-to-busy transitions) of the worker state.
+    *   When a rising edge is detected, it combines the sample history and newly captured samples to form a complete trace.
+    *   It **bins** the samples from this trace into an internal **accumulation buffer** (`std::vector<std::vector<std::deque<float>>>`), which stores the values for many traces.
+    *   It calculates statistics across all accumulated traces: the **trimmed mean**, **min/max envelopes**.
+    *   It populates a "back" `DisplayData` buffer with these final, render-ready plot points.
+    *   Finally, it **atomically swaps a pointer**, making the newly completed `DisplayData` available to the GUI thread for its next frame. This is the core of the lock-free data handoff.
+    *   It also polls the `CommandQueue` to react to user input from the GUI, such as clearing buffers when the test core changes.
 
-4.  **Measurement Thread** (`measurement_thread_func`):
-    *   Pinned to a dedicated, isolated CPU core (core 0) to ensure consistent timing.
-    *   Uses `RealtimeGuard` to acquire real-time scheduling priority (`SCHED_FIFO`).
-    *   Runs a tight loop, sampling the `pm_table` at a fixed high-frequency interval (e.g., 1ms). Timing is maintained by a hybrid `clock_nanosleep` and spin-wait loop.
-    *   Uses a `PmTableReader` to read sensor data from sysfs directly into a pre-allocated, memory-locked buffer.
-    *   Feeds each sample (timestamp, worker state, sensor values) into an `EyeCapturer` instance, which processes the data in real-time.
+4.  **Worker Thread** (`GuiRunner::run_worker_thread` -> `worker_thread_func`):
+    *   Pinned to the CPU core under test.
+    *   Executes a simple busy/wait cycle with a configurable period and duty cycle.
+    *   Communicates its current state (0 for idle, 1 for busy) to the Measurement thread via the global atomic `g_worker_state`.
 
 ## Key Classes and Data Structures
 
-Classes are grouped by their role in the application.
+The class structure has been simplified to reflect the new pipeline.
 
 ### System and OS Abstractions
 
-*   `PmTableReader`: A simple helper class that opens `/sys/kernel/ryzen_smu_drv/pm_table` on construction and provides a method to read the entire table into a buffer. It also reads and caches the table size.
-*   `LockedBuffer`: An RAII wrapper for allocating a large, page-aligned memory buffer. It attempts to lock the buffer into RAM using `mlock` to prevent page faults during the critical measurement loop, falling back to a standard `malloc` if permissions are insufficient.
-*   `RealtimeGuard`: An RAII helper that elevates the current thread's scheduling policy to `SCHED_FIFO` and pins it to a specific CPU core. It automatically restores the original scheduling policy and affinity when it goes out of scope, ensuring clean teardown.
+*   `PmTableReader`: Unchanged. A helper class to read the `/sys/kernel/ryzen_smu_drv/pm_table` blob.
+*   `RealtimeGuard`: Unchanged. An RAII helper to manage real-time scheduling (`SCHED_FIFO`) and CPU affinity for a thread.
+*   `LockedBuffer`: No longer a central component of the streaming architecture, but may be used for other purposes. Data is now primarily streamed through queues.
 
-### Data Capture and Storage
+### Data Flow and Communication Primitives
 
-*   `EyeDiagramStorage`: The primary data container for the eye diagram. It holds binned sensor measurements. It is configured with a time window (e.g., -50ms to +150ms around an event) and allocates a multi-dimensional vector (`bins`) to store all samples that fall into each time bin for each monitored sensor. The `GuiRunner` maintains two instances of this class for double-buffering.
-*   `EyeCapturer`: A state machine that processes the raw sample stream from the measurement thread. It watches the worker's state and, upon detecting a rising edge (idle to busy), it begins capturing subsequent samples. It calculates the time delta from the rising edge for each sample and places the sensor values into the correct time bin in the `EyeDiagramStorage`.
-
-### GUI Components
-
-*   `GuiRunner`: The main class for the application. It initializes the GLFW window and ImGui context. It spawns the experiment thread and manages the main render loop. It facilitates communication between the GUI and experiment threads using atomic variables for control (e.g., `manual_mode_`) and a double-buffering scheme for data.
-*   `GuiDataCache`: A helper that decouples data processing from rendering. It holds render-ready plot data (`EyePlotData`). Periodically, the GUI thread calls `update()` on this cache. Inside `update()`, it accesses the latest `EyeDiagramStorage` made available by the experiment thread. For each sensor and for each time bin within that sensor's data, it performs the following steps:
-    1.  It takes all the raw float samples collected in that specific time bin.
-    2.  It sorts the samples.
-    3.  It calculates the **10% trimmed mean** of the samples (i.e., removes the lowest 10% and highest 10% of values, then averages the rest).
-    4.  This single trimmed mean value becomes the Y-value for the plot at that point in time (the X-value).
-    This process reduces the potentially thousands of individual data points in each bin to a single, statistically robust point, which is then used to draw the line plots. This ensures a smooth frame rate and a clear visualization of the central tendency of the sensor data over time.
-*   `EyePlotData`: A simple struct containing the data needed to render a single plot: the x-axis values (time) and y-axis values (e.g., trimmed mean sensor reading).
+*   **`folly::ProducerConsumerQueue<RawSample>`**: The high-performance, wait-free queue that decouples the Measurement thread from the Processing thread. This is critical for ensuring the measurement loop is never stalled.
+*   **Double-Buffer of `DisplayData`**: The `GuiRunner` owns two complete sets of `DisplayData` objects (one for each interesting sensor). The Processing thread writes to the inactive set. An `std::vector<std::atomic<DisplayData*>>` provides the GUI thread with safe, lock-free, read-only access to the active set.
+*   `CommandQueue`: A simple thread-safe queue (`std::queue` + `std::mutex`) used to send commands from the GUI to the Processing thread.
 
 ### Core Data Types
 
-*   `measurement_types.hpp`: Defines fundamental types like `TimePoint` from `std::chrono::steady_clock`, ensuring consistent, high-precision timing throughout the application.
+*   `RawSample`: A struct holding a single timestamp, the worker state, and an array of all sensor values from one read of the PM table. This is the data unit passed through the SPSC queue.
+*   `DisplayData`: A struct containing only the data needed for rendering one plot: vectors for x-values (time) and y-values (trimmed mean, min, max), plus metadata like the window size. It contains no raw samples.
+
+### GUI Components
+
+*   `GuiRunner`: The central orchestrator class. Owns the threads, communication channels, and the main window.
+*   `render_gui()`: A free function that takes the current `DisplayData` pointers and other GUI state and is responsible only for issuing ImGui/ImPlot draw calls.
+
+### Deprecated/Removed Classes
+
+The following classes from the previous architecture have been removed, with their logic being absorbed and improved within the **Processing Thread**:
+*   `EyeCapturer`: Its state machine logic is now part of the processing loop.
+*   `EyeDiagramStorage`: The concept of storing raw, binned samples in a large structure shared across threads is gone. The Processing thread now manages this data internally in its accumulation buffer.
+*   `GuiDataCache`: The responsibility of processing raw data into plot-ready data is the primary function of the Processing thread, making this cache redundant.

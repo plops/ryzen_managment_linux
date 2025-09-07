@@ -48,9 +48,8 @@ GuiRunner::GuiRunner(int num_hardware_threads, int measurement_core, int period,
       // The worker load period is now distinct from the capture window
       worker_period_ms_(period), duty_cycle_percent_(duty_cycle),
       num_cycles_(cycles), n_measurements_(n_measurements),
-      interesting_index_(interesting_index),
-      pm_table_reader_(pm_table_reader),
-      spsc_queue_(2048), // SPSC queue size, e.g., for ~2 seconds of data
+      interesting_index_(interesting_index), pm_table_reader_(pm_table_reader),
+      spsc_queue_(600), // SPSC queue size, e.g., for ~2 seconds of data
       gui_display_pointers_(interesting_index_.size()) {
   SPDLOG_INFO("GUI mode enabled. Initializing data buffers...");
   const size_t num_interesting = interesting_index_.size();
@@ -111,16 +110,19 @@ void GuiRunner::run_processing_thread() {
           [&](auto &&arg) {
             using T = std::decay_t<decltype(arg)>;
             if constexpr (std::is_same_v<T, ChangeCoreCmd>) {
-              SPDLOG_INFO("Processing command: Change core to {}", arg.new_core_id);
+              SPDLOG_INFO("Processing command: Change core to {}",
+                          arg.new_core_id);
               for (auto &sensor_bins : accumulation_buffer) {
-                for (auto &bin : sensor_bins) bin.clear();
+                for (auto &bin : sensor_bins)
+                  bin.clear();
               }
               current_trace.clear();
               sample_history.clear();
               state = State::IDLE;
             } else if constexpr (std::is_same_v<T, ChangeAccumulationsCmd>) {
               max_accumulations_.store(arg.new_count);
-              SPDLOG_INFO("Processing command: Change accumulations to {}", arg.new_count);
+              SPDLOG_INFO("Processing command: Change accumulations to {}",
+                          arg.new_count);
             }
           },
           cmd);
@@ -163,7 +165,8 @@ void GuiRunner::run_processing_thread() {
               const long long bin_idx = time_delta + window_before_ms_;
 
               if (bin_idx >= 0 && bin_idx < num_bins) {
-                for (size_t sens_idx = 0; sens_idx < s.num_measurements; ++sens_idx) {
+                for (size_t sens_idx = 0; sens_idx < s.num_measurements;
+                     ++sens_idx) {
                   if (auto it = sensor_to_storage_idx.find(sens_idx);
                       it != sensor_to_storage_idx.end()) {
                     accumulation_buffer[it->second][bin_idx].push_back(
@@ -236,8 +239,8 @@ void GuiRunner::run_worker_thread() const {
     if (manual_mode_.load()) {
       if (int core_to_test = manual_core_to_test_.load();
           core_to_test != measurement_core_) {
-        worker_thread_func(core_to_test, worker_period_ms_,
-                           duty_cycle_percent_, num_cycles_);
+        worker_thread_func(core_to_test, worker_period_ms_, duty_cycle_percent_,
+                           num_cycles_);
       }
     }
     std::this_thread::sleep_for(50ms);
@@ -245,7 +248,9 @@ void GuiRunner::run_worker_thread() const {
 }
 
 int GuiRunner::run() {
-  if (!glfwInit()) { return -1; }
+  if (!glfwInit()) {
+    return -1;
+  }
   glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
   glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
   glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
@@ -298,9 +303,12 @@ int GuiRunner::run() {
   terminate_threads_.store(true);
   g_run_measurement.store(false);
 
-  if (measurement.joinable()) measurement.join();
-  if (processing.joinable()) processing.join();
-  if (worker.joinable()) worker.join();
+  if (measurement.joinable())
+    measurement.join();
+  if (processing.joinable())
+    processing.join();
+  if (worker.joinable())
+    worker.join();
 
   SPDLOG_INFO("GUI mode finished.");
   return 0;

@@ -73,9 +73,14 @@ void render_gui(
         if (plot && !plot->x_data.empty()) {
           if (ImPlot::BeginPlot("##EyePlot", ImVec2(-1, 80),
                                 ImPlotFlags_NoTitle | ImPlotFlags_NoLegend)) {
-            // --- FIXED: Use before and after windows for correct axis limits ---
-            ImPlot::SetupAxisLimits(ImAxis_X1, -plot->window_before_ms,
-                                    plot->window_after_ms, ImGuiCond_Always);
+
+            ImPlot::SetupAxisLimits(ImAxis_X1, 0, // -plot->window_before_ms,
+                                    plot->window_after_ms, ImPlotCond_Always);
+            // hide X axis ticks/labels
+            ImPlot::SetupAxis(ImAxis_X1, nullptr,
+                              ImPlotAxisFlags_NoTickLabels |
+                                  ImPlotAxisFlags_NoTickMarks);
+
             ImPlot::SetupAxis(ImAxis_Y1, nullptr, ImPlotAxisFlags_AutoFit);
 
             ImPlot::PushStyleColor(ImPlotCol_Line,
@@ -84,17 +89,17 @@ void render_gui(
                              plot->y_data_mean.data(),
                              static_cast<int>(plot->x_data.size()));
 
-            ImPlot::PushStyleColor(ImPlotCol_Line,
-                                   ImVec4(1, 0, 0, 0.5f)); // Red for Max
-            ImPlot::PlotLine("Max", plot->x_data.data(),
-                             plot->y_data_max.data(),
-                             static_cast<int>(plot->x_data.size()));
-
-            ImPlot::PushStyleColor(ImPlotCol_Line,
-                                   ImVec4(0, 1, 1, 0.5f)); // Cyan for Min
-            ImPlot::PlotLine("Min", plot->x_data.data(),
-                             plot->y_data_min.data(),
-                             static_cast<int>(plot->x_data.size()));
+            // ImPlot::PushStyleColor(ImPlotCol_Line,
+            //                        ImVec4(1, 0, 0, 0.5f)); // Red for Max
+            // ImPlot::PlotLine("Max", plot->x_data.data(),
+            //                  plot->y_data_max.data(),
+            //                  static_cast<int>(plot->x_data.size()));
+            //
+            // ImPlot::PushStyleColor(ImPlotCol_Line,
+            //                        ImVec4(0, 1, 1, 0.5f)); // Cyan for Min
+            // ImPlot::PlotLine("Min", plot->x_data.data(),
+            //                  plot->y_data_min.data(),
+            //                  static_cast<int>(plot->x_data.size()));
             ImPlot::PopStyleColor(3);
 
             ImPlot::EndPlot();
