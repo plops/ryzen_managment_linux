@@ -96,10 +96,3 @@ The class structure has been simplified to reflect the new pipeline.
 
 *   `GuiRunner`: The central orchestrator class. Owns the threads, communication channels, and the main window.
 *   `render_gui()`: A free function that takes the current `DisplayData` pointers and other GUI state and is responsible only for issuing ImGui/ImPlot draw calls.
-
-### Deprecated/Removed Classes
-
-The following classes from the previous architecture have been removed, with their logic being absorbed and improved within the **Processing Thread**:
-*   `EyeCapturer`: Its state machine logic is now part of the processing loop.
-*   `EyeDiagramStorage`: The concept of storing raw, binned samples in a large structure shared across threads is gone. The Processing thread now manages this data internally in its accumulation buffer.
-*   `GuiDataCache`: The responsibility of processing raw data into plot-ready data is the primary function of the Processing thread, making this cache redundant.
